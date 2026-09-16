@@ -1,0 +1,50 @@
+name: Deploy StreamGuard HLS
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-typecheck:
+    name: Build & Typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+  deploy:
+    name: Trigger Coolify Deploy
+    needs: build-and-typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call Coolify Webhook
+        run: |
+          if [ -z "${{ secrets.COOLIFY_WEBHOOK_URL }}" ]; then
+            echo "::error::Thiếu secret COOLIFY_WEBHOOK_URL"
+            exit 1
+          fi
+
+          if [ -n "${{ secrets.COOLIFY_WEBHOOK_TOKEN }}" ]; then
+            curl --fail --silent --show-error \
+              -X POST "${{ secrets.COOLIFY_WEBHOOK_URL }}" \
+              -H "Authorization: Bearer ${{ secrets.COOLIFY_WEBHOOK_TOKEN }}"
+          else
+            curl --fail --silent --show-error \
+              -X POST "${{ secrets.COOLIFY_WEBHOOK_URL }}"
+          fi

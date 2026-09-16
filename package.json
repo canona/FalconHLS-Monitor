@@ -1,0 +1,28 @@
+{
+  "name": "streamguard-hls",
+  "version": "1.0.0",
+  "description": "StreamGuard HLS - Hệ thống giám sát chủ động chất lượng luồng HLS với cảnh báo Telegram",
+  "main": "dist/index.js",
+  "private": true,
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": ["hls", "monitoring", "ffprobe", "telegram", "streamguard"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^1.7.7",
+    "dotenv": "^16.4.5",
+    "p-queue": "^6.6.2",
+    "winston": "^3.14.2",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.15",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.5.4"
+  }
+}

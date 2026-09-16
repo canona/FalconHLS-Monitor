@@ -1,0 +1,25 @@
+{
+  "streams": [
+    {
+      "name": "Demo-TV-Channel",
+      "url": "https://example.com/live/tv-channel/index.m3u8",
+      "type": "tv"
+    },
+    {
+      "name": "Demo-Radio-Channel",
+      "url": "https://example.com/live/radio-channel/index.m3u8",
+      "type": "radio"
+    }
+  ],
+  "checkIntervalSeconds": 30,
+  "cooldownMinutes": 15,
+  "timeoutSeconds": 10,
+  "ffprobeDurationSeconds": 6,
+  "maxConcurrentChecks": 3,
+  "thresholds": {
+    "minVideoBitrateKbps": 400,
+    "minAudioBitrateKbps": 32,
+    "maxPacketLossPercentage": 2,
+    "maxManifestLatencyMs": 4000
+  }
+}
