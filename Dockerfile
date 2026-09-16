@@ -26,7 +26,10 @@ COPY package*.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 
 COPY --from=builder /app/dist ./dist
-COPY config.json ./config.json
+# config.json thật KHÔNG có trong repo (gitignore vì chứa URL luồng nội bộ) nên không thể COPY ở build-time.
+# Đóng gói config.example.json làm cấu hình mặc định (placeholder) để image tự chạy được ngay khi start;
+# ở production PHẢI mount config.json thật đè lên qua Volume/File mount của Coolify (xem README mục 4.1.4).
+COPY config.example.json ./config.json
 
 EXPOSE 3000
 
