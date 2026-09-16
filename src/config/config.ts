@@ -16,6 +16,28 @@ const ThresholdsSchema = z.object({
   maxManifestLatencyMs: z.number().positive(),
 });
 
+const RetrySchema = z
+  .object({
+    maxRetries: z.number().int().min(1).default(3),
+    retryDelaysMs: z.array(z.number().positive()).min(1).default([5000, 10000]),
+  })
+  .default({});
+
+const AlertBatchingSchema = z
+  .object({
+    windowMs: z.number().positive().default(12000),
+    minCountToDigest: z.number().int().positive().default(3),
+  })
+  .default({});
+
+const DiagnosticsSchema = z
+  .object({
+    eventLoopLagThresholdMs: z.number().positive().default(200),
+    memoryHeapUsedRatioThreshold: z.number().min(0).max(1).default(0.9),
+    ffprobeSlowThresholdMs: z.number().positive().default(8000),
+  })
+  .default({});
+
 const ConfigSchema = z.object({
   streams: z.array(StreamSchema).min(1, "Cần khai báo ít nhất 1 luồng trong config"),
   checkIntervalSeconds: z.number().positive(),
@@ -23,7 +45,11 @@ const ConfigSchema = z.object({
   timeoutSeconds: z.number().positive(),
   ffprobeDurationSeconds: z.number().positive(),
   maxConcurrentChecks: z.number().int().positive(),
+  maxConcurrentManifestChecks: z.number().int().positive().default(10),
   thresholds: ThresholdsSchema,
+  retry: RetrySchema,
+  alertBatching: AlertBatchingSchema,
+  diagnostics: DiagnosticsSchema,
 });
 
 let cachedConfig: AppConfig | null = null;

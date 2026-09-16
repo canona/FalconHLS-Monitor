@@ -1,8 +1,25 @@
 import { spawn } from "child_process";
+import PQueue from "p-queue";
 import { createChildLogger } from "../logger/logger";
+import { logDiagnostic } from "../logger/diagnosticLogger";
 import type { AvAnalysisResult } from "../types";
 
 const log = createChildLogger("ffprobe");
+
+/**
+ * Queue riêng giới hạn số tiến trình ffprobe/ffmpeg (Level 3) chạy đồng thời trên TOÀN hệ thống,
+ * độc lập với queue Level 1/2 (nhẹ hơn nhiều). Đây là nút thắt tài nguyên thật (CPU decode + network
+ * fetch segment) khi giám sát nhiều luồng cùng lúc - ép nghiêm ngặt theo `maxConcurrentChecks`.
+ */
+let ffprobeQueue = new PQueue({ concurrency: 5 });
+
+export function configureFfprobeConcurrency(limit: number): void {
+  ffprobeQueue = new PQueue({ concurrency: limit });
+}
+
+export function getFfprobeQueueStats(): { size: number; pending: number } {
+  return { size: ffprobeQueue.size, pending: ffprobeQueue.pending };
+}
 
 interface ProcessResult {
   stdout: string;
@@ -223,25 +240,23 @@ function measureTrack(
   });
 }
 
-/**
- * Level 3: Kiểm tra sâu chất lượng AV bằng ffprobe/ffmpeg.
- * Đọc trực tiếp luồng trong vài giây, trả về bitrate thực tế video/audio,
- * codec, tình trạng thiếu track, và tỉ lệ lỗi giải mã (packet loss heuristic).
- *
- * @param videoUrl URL playlist chứa video (variant đã chọn).
- * @param audioUrl URL playlist audio riêng biệt, nếu master playlist tách audio
- *                 qua #EXT-X-MEDIA (rất phổ biến ở luồng broadcast thật). Khi không
- *                 có, audio được kiểm tra trực tiếp trên videoUrl (giả định đã mux).
- * @param probeVideo false đối với luồng Radio: bỏ qua hoàn toàn việc decode/đo bitrate
- *                    video (không cần thiết và tốn CPU cho luồng chỉ có tiếng).
- */
-export async function analyzeStream(
-  videoUrl: string,
-  ffprobeDurationSeconds: number,
-  timeoutSeconds: number,
-  audioUrl?: string,
-  probeVideo: boolean = true
-): Promise<AvAnalysisResult> {
+export interface AnalyzeStreamParams {
+  streamName: string;
+  videoUrl: string;
+  ffprobeDurationSeconds: number;
+  timeoutSeconds: number;
+  /** URL playlist audio riêng biệt (EXT-X-MEDIA), nếu master playlist tách audio khỏi video variant. */
+  audioUrl?: string;
+  /** false đối với luồng Radio: bỏ qua hoàn toàn việc decode/đo bitrate video. */
+  probeVideo?: boolean;
+  /** Nếu thực thi lâu hơn ngưỡng này (dù thành công), log cảnh báo nghẽn (bottleneck) vào diagnostic.log. */
+  slowThresholdMs?: number;
+}
+
+async function analyzeStreamInternal(params: AnalyzeStreamParams): Promise<AvAnalysisResult> {
+  const { streamName, videoUrl, ffprobeDurationSeconds, timeoutSeconds, audioUrl, probeVideo = true } = params;
+  const startedAt = Date.now();
+
   try {
     const videoMetadata = await probeMetadata(videoUrl, timeoutSeconds);
     const audioMetadata = audioUrl ? await probeMetadata(audioUrl, timeoutSeconds) : videoMetadata;
@@ -268,6 +283,19 @@ export async function analyzeStream(
         ? Math.min(100, (packetLossBasis.errorCount / packetLossBasis.sampleCount) * 100)
         : 0;
 
+    const executionMs = Date.now() - startedAt;
+    if (params.slowThresholdMs && executionMs > params.slowThresholdMs) {
+      logDiagnostic("ffprobe_bottleneck", {
+        stream: streamName,
+        executionMs,
+        slowThresholdMs: params.slowThresholdMs,
+        queueStats: getFfprobeQueueStats(),
+      });
+      log.warn(`Level 3 cho luồng ${streamName} chạy chậm bất thường (${executionMs}ms) - nghi ngờ nghẽn queue/CPU`, {
+        executionMs,
+      });
+    }
+
     return {
       hasVideo: probeVideo && videoMetadata.hasVideo,
       hasAudio,
@@ -276,9 +304,16 @@ export async function analyzeStream(
       videoBitrateKbps: videoMeasurement.bitrateKbps,
       audioBitrateKbps: audioMeasurement.bitrateKbps,
       packetLossPercentage,
+      executionMs,
     };
   } catch (err) {
-    log.warn("Lỗi khi phân tích AV bằng ffprobe/ffmpeg", { videoUrl, audioUrl, error: (err as Error).message });
+    const executionMs = Date.now() - startedAt;
+    const message = (err as Error).message;
+    const timedOut = /timeout/i.test(message);
+
+    logDiagnostic("ffprobe_error", { stream: streamName, executionMs, timedOut, error: message });
+    log.warn("Lỗi khi phân tích AV bằng ffprobe/ffmpeg", { streamName, videoUrl, audioUrl, error: message, timedOut });
+
     return {
       hasVideo: false,
       hasAudio: false,
@@ -287,7 +322,21 @@ export async function analyzeStream(
       videoBitrateKbps: null,
       audioBitrateKbps: null,
       packetLossPercentage: 0,
-      error: (err as Error).message,
+      error: message,
+      timedOut,
+      executionMs,
     };
   }
+}
+
+/**
+ * Level 3: Kiểm tra sâu chất lượng AV bằng ffprobe/ffmpeg.
+ * Đọc trực tiếp luồng trong vài giây, trả về bitrate thực tế video/audio,
+ * codec, tình trạng thiếu track, và tỉ lệ lỗi giải mã (packet loss heuristic).
+ *
+ * Toàn bộ lệnh gọi được xếp qua `ffprobeQueue` (xem `configureFfprobeConcurrency`) - luồng
+ * nào đến sau khi queue đã đầy sẽ CHỜ, không chạy song song vô hạn.
+ */
+export function analyzeStream(params: AnalyzeStreamParams): Promise<AvAnalysisResult> {
+  return ffprobeQueue.add(() => analyzeStreamInternal(params)) as Promise<AvAnalysisResult>;
 }

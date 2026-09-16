@@ -1,7 +1,7 @@
 import axios from "axios";
 import { createChildLogger } from "../logger/logger";
 import { formatVnTime } from "../utils/time";
-import type { StreamCheckResult } from "../types";
+import type { AlertIncident, StreamCheckResult } from "../types";
 
 const log = createChildLogger("telegram-bot");
 
@@ -40,29 +40,46 @@ export async function sendTelegramMessage(text: string): Promise<void> {
   }
 }
 
-function escapeMd(text: string): string {
+export function escapeMd(text: string): string {
   return text.replace(/([_*[\]()~`>#+\-=|{}.!])/g, "\\$1");
 }
 
-export function buildDegradedMessage(result: StreamCheckResult): string {
-  const name = escapeMd(result.streamName);
-  const detailLines = result.issues.map((issue) => `📉 *Chi tiết:* ${escapeMd(issue)}`).join("\n");
+const CATEGORY_LABEL: Record<AlertIncident["category"], string> = {
+  SYSTEM_OVERLOAD: "Hệ thống giám sát quá tải",
+  NETWORK: "Lỗi mạng / mất kết nối Origin-CDN",
+  STREAM: "Lỗi luồng HLS thực sự",
+};
+
+/** Rút gọn issue đầu tiên của 1 luồng để hiển thị trong danh sách gộp (digest). */
+function shortIssue(incident: AlertIncident): string {
+  const first = incident.issues[0] || "Không rõ nguyên nhân";
+  return first.length > 60 ? `${first.slice(0, 57)}...` : first;
+}
+
+export function buildIncidentMessage(incident: AlertIncident): string {
+  const name = escapeMd(incident.streamName);
+  const detailLines = incident.issues.map((issue) => `📉 *Chi tiết:* ${escapeMd(issue)}`).join("\n");
+  const headline =
+    incident.status === "DOWN" ? `Luồng *${name}* mất kết nối\\!` : `Luồng *${name}* bị suy giảm\\!`;
 
   return [
-    `🔴 *CẢNH BÁO:* Luồng *${name}* bị suy giảm\\!`,
+    `🔴 *CẢNH BÁO:* ${headline}`,
+    `🏷 *Nguyên nhân:* ${escapeMd(CATEGORY_LABEL[incident.category])}`,
     detailLines,
-    `🕐 Thời điểm: ${escapeMd(formatVnTime(result.checkedAt))}`,
+    `🔁 Đã xác nhận sau ${incident.attempts} lần kiểm tra liên tiếp`,
+    `🕐 Thời điểm: ${escapeMd(formatVnTime(incident.checkedAt))}`,
   ].join("\n");
 }
 
-export function buildDownMessage(result: StreamCheckResult): string {
-  const name = escapeMd(result.streamName);
-  const reason = escapeMd(result.manifest.error || "Không truy cập được manifest");
+/** Gộp nhiều sự cố xảy ra trong cùng 1 khung thời gian thành 1 tin nhắn duy nhất (chống spam diện rộng). */
+export function buildDigestMessage(incidents: AlertIncident[]): string {
+  const detail = incidents.map((i) => `${escapeMd(i.streamName)} \\(${escapeMd(shortIssue(i))}\\)`).join(", ");
 
   return [
-    `🔴 *CẢNH BÁO:* Luồng *${name}* mất kết nối\\!`,
-    `📉 *Chi tiết:* ${reason}`,
-    `🕐 Thời điểm: ${escapeMd(formatVnTime(result.checkedAt))}`,
+    `🔴 *CẢNH BÁO DIỆN RỘNG \\(Gộp\\)*`,
+    `Đang có ${incidents.length} luồng gặp sự cố cùng lúc\\.`,
+    `📉 *Chi tiết:* ${detail}`,
+    `🕐 Thời điểm: ${escapeMd(formatVnTime(incidents[0]?.checkedAt ?? new Date()))}`,
   ].join("\n");
 }
 

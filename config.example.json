@@ -15,11 +15,25 @@
   "cooldownMinutes": 15,
   "timeoutSeconds": 10,
   "ffprobeDurationSeconds": 6,
-  "maxConcurrentChecks": 3,
+  "maxConcurrentChecks": 5,
+  "maxConcurrentManifestChecks": 10,
   "thresholds": {
     "minVideoBitrateKbps": 400,
     "minAudioBitrateKbps": 32,
     "maxPacketLossPercentage": 2,
     "maxManifestLatencyMs": 4000
+  },
+  "retry": {
+    "maxRetries": 3,
+    "retryDelaysMs": [5000, 10000]
+  },
+  "alertBatching": {
+    "windowMs": 12000,
+    "minCountToDigest": 3
+  },
+  "diagnostics": {
+    "eventLoopLagThresholdMs": 200,
+    "memoryHeapUsedRatioThreshold": 0.9,
+    "ffprobeSlowThresholdMs": 8000
   }
 }

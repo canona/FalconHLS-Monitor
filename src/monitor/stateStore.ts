@@ -6,6 +6,11 @@ const lastResults = new Map<string, StreamCheckResult>();
 function defaultState(): StreamRuntimeState {
   return {
     lastStatus: "OK",
+    phase: "STABLE",
+    suspectAttempt: 0,
+    suspectSince: null,
+    isChecking: false,
+    pendingRetryTimer: null,
     lastAlertAt: null,
     lastMediaSequence: null,
     lastSegmentUri: null,
@@ -34,4 +39,18 @@ export function setLastResult(streamName: string, result: StreamCheckResult): vo
 
 export function getAllLastResults(): StreamCheckResult[] {
   return Array.from(lastResults.values());
+}
+
+export function getAllStates(): Map<string, StreamRuntimeState> {
+  return states;
+}
+
+/** Hủy mọi timer retry đang chờ trên tất cả luồng - dùng khi shutdown để tiến trình thoát sạch. */
+export function clearAllPendingRetries(): void {
+  for (const state of states.values()) {
+    if (state.pendingRetryTimer) {
+      clearTimeout(state.pendingRetryTimer);
+      state.pendingRetryTimer = null;
+    }
+  }
 }

@@ -5,6 +5,9 @@ import { loadConfig } from "./config/config";
 import { logger } from "./logger/logger";
 import { startScheduler } from "./monitor/scheduler";
 import { startHealthServer } from "./monitor/healthServer";
+import { startEventLoopMonitor } from "./monitor/eventLoopMonitor";
+import { configureFfprobeConcurrency } from "./ffmpeg/ffprobe";
+import { configureAlertManager, flushAlertsNow } from "./telegram/alertManager";
 
 async function main() {
   logger.info("=== StreamGuard HLS - Khởi động hệ thống giám sát ===");
@@ -18,6 +21,10 @@ async function main() {
     );
   }
 
+  startEventLoopMonitor();
+  configureFfprobeConcurrency(config.maxConcurrentChecks);
+  configureAlertManager(config.alertBatching);
+
   const port = Number(process.env.PORT) || 3000;
   startHealthServer(port);
 
@@ -26,7 +33,9 @@ async function main() {
   const shutdown = (signal: string) => {
     logger.info(`Nhận tín hiệu ${signal}, đang dừng StreamGuard HLS...`);
     scheduler.stop();
-    process.exit(0);
+    Promise.race([flushAlertsNow(), new Promise((resolve) => setTimeout(resolve, 3000))]).finally(() => {
+      process.exit(0);
+    });
   };
 
   process.on("SIGINT", () => shutdown("SIGINT"));

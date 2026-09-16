@@ -2,13 +2,14 @@ import type { AppConfig, StreamConfig, StreamCheckResult, HealthStatus } from ".
 import { checkManifest } from "./manifestChecker";
 import { checkFreeze } from "./freezeChecker";
 import { analyzeStream } from "../ffmpeg/ffprobe";
-import { getState, setState, setLastResult } from "./stateStore";
-import { sendTelegramMessage, buildDegradedMessage, buildDownMessage, buildRecoveryMessage } from "../telegram/telegramBot";
-import { createChildLogger } from "../logger/logger";
+import { getState } from "./stateStore";
 
-const log = createChildLogger("stream-checker");
-
-/** Thực hiện đầy đủ Level 1 -> 2 -> 3 cho một luồng, cập nhật state và gửi cảnh báo nếu cần. */
+/**
+ * Thực hiện đầy đủ Level 1 -> 2 -> 3 cho MỘT lần kiểm tra của một luồng, trả về kết quả thô.
+ * Hàm này THUẦN (pure) về mặt state/alert: không quyết định gửi Telegram, không cập nhật
+ * StreamRuntimeState - việc đó thuộc về `incidentManager.ts` để có thể tái sử dụng hàm này
+ * cho cả lần kiểm tra định kỳ lẫn các lần retry trong cơ chế debounce/suspect.
+ */
 export async function checkStream(stream: StreamConfig, config: AppConfig): Promise<StreamCheckResult> {
   const previousState = getState(stream.name);
   const issues: string[] = [];
@@ -16,15 +17,13 @@ export async function checkStream(stream: StreamConfig, config: AppConfig): Prom
   const manifest = await checkManifest(stream.url, config.timeoutSeconds);
 
   if (!manifest.ok || !manifest.manifest) {
-    const result: StreamCheckResult = {
+    return {
       streamName: stream.name,
       checkedAt: new Date(),
       status: "DOWN",
       issues: [manifest.error || "Không truy cập được manifest"],
       manifest,
     };
-    await finalizeAndAlert(stream, result, previousState, config);
-    return result;
   }
 
   if (manifest.latencyMs > config.thresholds.maxManifestLatencyMs) {
@@ -42,13 +41,15 @@ export async function checkStream(stream: StreamConfig, config: AppConfig): Prom
 
   const isRadio = stream.type === "radio";
 
-  const av = await analyzeStream(
-    manifest.resolvedUrl,
-    config.ffprobeDurationSeconds,
-    config.timeoutSeconds,
-    manifest.resolvedAudioUrl,
-    !isRadio
-  );
+  const av = await analyzeStream({
+    streamName: stream.name,
+    videoUrl: manifest.resolvedUrl,
+    ffprobeDurationSeconds: config.ffprobeDurationSeconds,
+    timeoutSeconds: config.timeoutSeconds,
+    audioUrl: manifest.resolvedAudioUrl,
+    probeVideo: !isRadio,
+    slowThresholdMs: config.diagnostics.ffprobeSlowThresholdMs,
+  });
 
   if (av.error) {
     issues.push(`Không phân tích được chất lượng AV: ${av.error}`);
@@ -80,7 +81,7 @@ export async function checkStream(stream: StreamConfig, config: AppConfig): Prom
 
   const status: HealthStatus = issues.length === 0 ? "OK" : "DEGRADED";
 
-  const result: StreamCheckResult = {
+  return {
     streamName: stream.name,
     checkedAt: new Date(),
     status,
@@ -89,49 +90,4 @@ export async function checkStream(stream: StreamConfig, config: AppConfig): Prom
     freeze,
     av,
   };
-
-  await finalizeAndAlert(stream, result, previousState, config);
-  return result;
-}
-
-async function finalizeAndAlert(
-  stream: StreamConfig,
-  result: StreamCheckResult,
-  previousState: ReturnType<typeof getState>,
-  config: AppConfig
-): Promise<void> {
-  const now = result.checkedAt;
-  const cooldownMs = config.cooldownMinutes * 60_000;
-
-  const wasHealthy = previousState.lastStatus === "OK";
-  const isHealthy = result.status === "OK";
-
-  let lastAlertAt = previousState.lastAlertAt;
-
-  if (!isHealthy) {
-    const cooldownElapsed = !lastAlertAt || now.getTime() - lastAlertAt.getTime() >= cooldownMs;
-
-    if (wasHealthy || cooldownElapsed) {
-      const message = result.status === "DOWN" ? buildDownMessage(result) : buildDegradedMessage(result);
-      await sendTelegramMessage(message);
-      lastAlertAt = now;
-      log.warn(`Cảnh báo đã gửi cho luồng ${stream.name}`, { status: result.status, issues: result.issues });
-    }
-  } else if (!wasHealthy) {
-    await sendTelegramMessage(buildRecoveryMessage(result));
-    lastAlertAt = null;
-    log.info(`Luồng ${stream.name} đã phục hồi`);
-  }
-
-  setState(stream.name, {
-    lastStatus: result.status,
-    lastAlertAt,
-    lastMediaSequence: result.freeze?.mediaSequence ?? previousState.lastMediaSequence,
-    lastSegmentUri: result.freeze?.lastSegmentUri ?? previousState.lastSegmentUri,
-    lastManifestChangeAt: result.freeze?.frozen ? previousState.lastManifestChangeAt : now,
-    lastCheckedAt: now,
-    consecutiveFailures: isHealthy ? 0 : previousState.consecutiveFailures + 1,
-  });
-
-  setLastResult(stream.name, result);
 }
