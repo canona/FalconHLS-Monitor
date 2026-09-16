@@ -164,7 +164,7 @@ Sau khi chạy, truy cập `http://localhost:3000/health` để xem nhanh trạn
    - `TELEGRAM_CHAT_ID`
    - `PORT=3000` (hoặc để Coolify tự map)
    - `LOG_LEVEL=info`
-4. Nếu muốn thay đổi danh sách luồng/ngưỡng cảnh báo mà không rebuild image, mount `config.json` dưới dạng **Volume/File mount** vào `/app/config.json` trong phần *Storage* của Coolify.
+4. **Bắt buộc** mount `config.json` thật dưới dạng **Volume/File mount** vào `/app/config.json` trong phần *Storage* của Coolify. `config.json` chứa URL luồng nội bộ nên bị gitignore (không có trong repo) — image chỉ đóng gói sẵn `config.example.json` (đổi tên thành `config.json`) làm placeholder để container khởi động được, **không trỏ tới luồng thật nào**. Nếu bỏ qua bước này, container vẫn chạy "khỏe" (health check pass) nhưng chỉ giám sát URL mẫu `example.com` vô nghĩa.
 5. Vào **Webhooks** của Application trên Coolify (mục *Webhooks* / *Deploy Webhook*), copy URL webhook — đây chính là giá trị cần đưa vào GitHub Secret `COOLIFY_WEBHOOK_URL`. Nếu Coolify yêu cầu token xác thực riêng, lưu token đó vào secret `COOLIFY_WEBHOOK_TOKEN` (workflow sẽ tự thêm header `Authorization: Bearer` nếu secret này tồn tại).
 
 ### 4.2. Cấu hình GitHub Secrets
