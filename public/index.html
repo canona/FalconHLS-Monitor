@@ -17,7 +17,14 @@
     50% { box-shadow: 0 0 14px rgba(220,38,38,.55); }
   }
   .glow-degraded { animation: glow-red 2.2s ease-in-out infinite; }
+  @keyframes glow-amber {
+    0%,100% { box-shadow: 0 0 0 rgba(217,119,6,0); }
+    50% { box-shadow: 0 0 10px rgba(217,119,6,.4); }
+  }
+  .glow-suspect { animation: glow-amber 2.4s ease-in-out infinite; }
   .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .chevron { transition: transform .15s ease; }
+  .collapsed .chevron { transform: rotate(-90deg); }
 </style>
 </head>
 <body class="min-h-screen bg-[#0b0f14] text-slate-200">
@@ -25,7 +32,7 @@
 <div style="padding-top: env(safe-area-inset-top,0px)"></div>
 
 <header class="sticky top-0 z-20 border-b border-slate-800 bg-[#0b0f14]/90 backdrop-blur">
-  <div class="max-w-[1500px] mx-auto px-4 sm:px-6 py-3 flex flex-wrap items-center gap-x-6 gap-y-2">
+  <div class="max-w-[1600px] mx-auto px-4 sm:px-6 py-3 flex flex-wrap items-center gap-x-6 gap-y-2">
     <div class="flex items-center gap-2 shrink-0">
       <span class="text-2xl">🦅</span>
       <div>
@@ -39,38 +46,108 @@
       <span id="conn-label" class="text-slate-400">Đang kết nối...</span>
     </div>
 
-    <div id="summary" class="flex items-center gap-3 text-xs sm:text-sm ml-auto"></div>
+    <div id="summary" class="flex items-center gap-3 text-xs sm:text-sm"></div>
 
     <div id="resources" class="hidden md:flex items-center gap-4 text-[11px] text-slate-500 mono"></div>
 
+    <div class="flex items-center gap-2 ml-auto">
+      <div id="view-toggle" class="inline-flex items-center rounded-lg border border-slate-700 bg-slate-900 p-0.5 text-xs">
+        <button data-view="grid" class="view-btn px-2.5 py-1 rounded-md transition-colors">🔲 Lưới</button>
+        <button data-view="list" class="view-btn px-2.5 py-1 rounded-md transition-colors">📋 Danh sách</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="max-w-[1600px] mx-auto px-4 sm:px-6 pb-3 flex flex-wrap items-center gap-2">
     <input
       id="search"
       type="text"
       placeholder="Tìm kênh..."
-      class="w-full sm:w-52 bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-sm placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-sky-600"
+      class="flex-1 min-w-[160px] sm:flex-none sm:w-56 bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-sm placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-sky-600"
     />
+    <div id="status-filter" class="inline-flex items-center gap-1.5 text-xs">
+      <button data-filter="all" class="filter-pill px-2.5 py-1 rounded-full border transition-colors">Tất cả</button>
+      <button data-filter="issues" class="filter-pill px-2.5 py-1 rounded-full border transition-colors">Đang lỗi</button>
+      <button data-filter="healthy" class="filter-pill px-2.5 py-1 rounded-full border transition-colors">Hoạt động tốt</button>
+    </div>
   </div>
 </header>
 
-<main class="max-w-[1500px] mx-auto px-4 sm:px-6 py-6 space-y-8">
-  <section>
-    <h2 class="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-slate-400 mb-3">
-      📺 Truyền hình (TV) <span id="tv-count" class="text-slate-600 font-normal normal-case">(0)</span>
+<main class="max-w-[1600px] mx-auto px-4 sm:px-6 py-6 space-y-8">
+
+  <section id="alert-zone" hidden class="rounded-xl border border-red-700/60 bg-red-950/20 p-4">
+    <h2 class="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-red-400 mb-3">
+      🚨 Kênh cần chú ý <span id="alert-count" class="text-red-500/70 font-normal normal-case">(0)</span>
     </h2>
-    <div id="tv-grid" class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"></div>
-    <p id="tv-empty" hidden class="text-sm text-slate-600 italic">Không có kênh TV nào.</p>
+    <div id="alert-list" class="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"></div>
   </section>
 
-  <section>
-    <h2 class="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-slate-400 mb-3">
-      📻 Phát thanh (Radio) <span id="radio-count" class="text-slate-600 font-normal normal-case">(0)</span>
-    </h2>
-    <div id="radio-grid" class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"></div>
-    <p id="radio-empty" hidden class="text-sm text-slate-600 italic">Không có kênh Radio nào.</p>
-  </section>
+  <div id="view-grid" class="space-y-8">
+    <section data-group="tv">
+      <h2 data-role="group-header" class="group-header flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-slate-400 mb-3 cursor-pointer select-none">
+        <span class="chevron">▾</span> 📺 Truyền hình (TV) <span data-role="group-count" class="text-slate-600 font-normal normal-case">(0)</span>
+      </h2>
+      <div data-role="group-body">
+        <div data-role="container" class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"></div>
+        <p data-role="empty" hidden class="text-sm text-slate-600 italic">Không có kênh TV nào.</p>
+      </div>
+    </section>
+
+    <section data-group="radio">
+      <h2 data-role="group-header" class="group-header flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-slate-400 mb-3 cursor-pointer select-none">
+        <span class="chevron">▾</span> 📻 Phát thanh (Radio) <span data-role="group-count" class="text-slate-600 font-normal normal-case">(0)</span>
+      </h2>
+      <div data-role="group-body">
+        <div data-role="container" class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"></div>
+        <p data-role="empty" hidden class="text-sm text-slate-600 italic">Không có kênh Radio nào.</p>
+      </div>
+    </section>
+  </div>
+
+  <div id="view-list" class="space-y-8" hidden>
+    <section data-group="tv">
+      <h2 data-role="group-header" class="group-header flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-slate-400 mb-3 cursor-pointer select-none">
+        <span class="chevron">▾</span> 📺 Truyền hình (TV) <span data-role="group-count" class="text-slate-600 font-normal normal-case">(0)</span>
+      </h2>
+      <div data-role="group-body" class="rounded-xl border border-slate-800 bg-slate-900/40 overflow-x-auto">
+        <div class="min-w-[760px]">
+          <div class="grid grid-cols-[minmax(140px,1.3fr)_minmax(160px,2fr)_90px_90px_90px_130px] gap-3 items-center px-3 py-2 text-[11px] uppercase tracking-wide text-slate-500 border-b border-slate-800 bg-slate-900/60">
+            <div>Tên kênh</div>
+            <div>Link HLS</div>
+            <div>Video</div>
+            <div>Audio</div>
+            <div>Cập nhật</div>
+            <div>Trạng thái</div>
+          </div>
+          <div data-role="container"></div>
+        </div>
+        <p data-role="empty" hidden class="text-sm text-slate-600 italic px-3 py-3">Không có kênh TV nào.</p>
+      </div>
+    </section>
+
+    <section data-group="radio">
+      <h2 data-role="group-header" class="group-header flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-slate-400 mb-3 cursor-pointer select-none">
+        <span class="chevron">▾</span> 📻 Phát thanh (Radio) <span data-role="group-count" class="text-slate-600 font-normal normal-case">(0)</span>
+      </h2>
+      <div data-role="group-body" class="rounded-xl border border-slate-800 bg-slate-900/40 overflow-x-auto">
+        <div class="min-w-[760px]">
+          <div class="grid grid-cols-[minmax(140px,1.3fr)_minmax(160px,2fr)_90px_90px_90px_130px] gap-3 items-center px-3 py-2 text-[11px] uppercase tracking-wide text-slate-500 border-b border-slate-800 bg-slate-900/60">
+            <div>Tên kênh</div>
+            <div>Link HLS</div>
+            <div>Video</div>
+            <div>Audio</div>
+            <div>Cập nhật</div>
+            <div>Trạng thái</div>
+          </div>
+          <div data-role="container"></div>
+        </div>
+        <p data-role="empty" hidden class="text-sm text-slate-600 italic px-3 py-3">Không có kênh Radio nào.</p>
+      </div>
+    </section>
+  </div>
 </main>
 
-<footer class="max-w-[1500px] mx-auto px-4 sm:px-6 pb-8 text-[11px] text-slate-600">
+<footer class="max-w-[1600px] mx-auto px-4 sm:px-6 pb-8 text-[11px] text-slate-600">
   Cập nhật lần cuối: <span id="last-updated" class="mono">-</span> · Tự động làm mới qua Server-Sent Events
 </footer>
 
@@ -86,22 +163,66 @@
     DEGRADED: { label: "LỖI", dot: "bg-red-500 pulse", badge: "bg-red-600/20 text-red-400 border-red-600/50", border: "border-red-700/70", ring: "glow-degraded" },
   };
 
-  const tvGrid = document.getElementById("tv-grid");
-  const radioGrid = document.getElementById("radio-grid");
-  const tvEmpty = document.getElementById("tv-empty");
-  const radioEmpty = document.getElementById("radio-empty");
-  const tvCount = document.getElementById("tv-count");
-  const radioCount = document.getElementById("radio-count");
+  const LS_VIEW_KEY = "falconhls:viewMode";
+
+  function safeGetStorage(key) {
+    try { return localStorage.getItem(key); } catch { return null; }
+  }
+  function safeSetStorage(key, value) {
+    try { localStorage.setItem(key, value); } catch { /* ignore (private mode / blocked) */ }
+  }
+
+  // ---- DOM refs ----
   const summaryEl = document.getElementById("summary");
   const resourcesEl = document.getElementById("resources");
   const lastUpdatedEl = document.getElementById("last-updated");
   const connDot = document.getElementById("conn-dot");
   const connLabel = document.getElementById("conn-label");
   const searchInput = document.getElementById("search");
+  const statusFilterEl = document.getElementById("status-filter");
+  const viewToggleEl = document.getElementById("view-toggle");
+  const viewGridEl = document.getElementById("view-grid");
+  const viewListEl = document.getElementById("view-list");
 
+  const alertZoneEl = document.getElementById("alert-zone");
+  const alertListEl = document.getElementById("alert-list");
+  const alertCountEl = document.getElementById("alert-count");
+
+  function groupRefs(root) {
+    const refs = {};
+    root.querySelectorAll("section[data-group]").forEach((section) => {
+      const group = section.getAttribute("data-group");
+      refs[group] = {
+        section,
+        header: section.querySelector('[data-role="group-header"]'),
+        count: section.querySelector('[data-role="group-count"]'),
+        body: section.querySelector('[data-role="group-body"]'),
+        container: section.querySelector('[data-role="container"]'),
+        empty: section.querySelector('[data-role="empty"]'),
+      };
+    });
+    return refs;
+  }
+
+  const gridRefs = groupRefs(viewGridEl);
+  const listRefs = groupRefs(viewListEl);
+
+  // ---- state ----
   let latestPayload = null;
   let searchTerm = "";
+  let statusFilter = "all"; // all | issues | healthy
+  let activeView = safeGetStorage(LS_VIEW_KEY) === "list" ? "list" : "grid";
+  const collapsedGroups = {}; // key: "<tv|radio>:<grid|list>" -> boolean, khởi tạo lười (mặc định mở)
 
+  // Cache element theo tên kênh, dùng để so sánh "chữ ký" dữ liệu và CHỈ cập nhật DOM của những
+  // kênh thực sự thay đổi - tránh vẽ lại toàn bộ 50-60 dòng mỗi 3 giây khi SSE bắn dữ liệu mới.
+  const caches = {
+    grid: { tv: new Map(), radio: new Map() },
+    list: { tv: new Map(), radio: new Map() },
+    alert: new Map(),
+  };
+
+  // ---- helpers ----
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   }
@@ -123,59 +244,154 @@
     return kbps >= 1000 ? (kbps / 1000).toFixed(2) + " Mbps" : Math.round(kbps) + " kbps";
   }
 
-  function streamCard(s) {
+  function signature(s) {
+    return [s.status, s.videoBitrateKbps, s.audioBitrateKbps, s.lastError, s.checkedAt, s.url, s.name].join("|");
+  }
+
+  function matchesFilters(s) {
+    if (statusFilter === "issues" && s.status === "HEALTHY") return false;
+    if (statusFilter === "healthy" && s.status !== "HEALTHY") return false;
+    if (searchTerm && !s.name.toLowerCase().includes(searchTerm)) return false;
+    return true;
+  }
+
+  // ---- render fragments cho từng loại phần tử ----
+  function cardInner(s) {
     const style = STATUS_STYLE[s.status] || STATUS_STYLE.SUSPECT;
     const errorLine = s.status !== "HEALTHY" && s.lastError
       ? `<div class="mt-2 text-[12px] text-red-400/90 bg-red-950/40 border border-red-900/50 rounded px-2 py-1 leading-snug">⚠ ${escapeHtml(s.lastError)}</div>`
       : "";
 
     return `
-      <div class="rounded-xl border ${style.border} ${style.ring} bg-slate-900/60 p-4 flex flex-col gap-2 transition-colors" data-name="${escapeHtml(s.name.toLowerCase())}">
-        <div class="flex items-start justify-between gap-2">
-          <div class="min-w-0">
-            <div class="font-medium text-slate-100 truncate" title="${escapeHtml(s.name)}">${escapeHtml(s.name)}</div>
-            <div class="text-[11px] text-slate-500 truncate mono" title="${escapeHtml(s.url)}">${escapeHtml(s.url)}</div>
-          </div>
-          <span class="shrink-0 inline-flex items-center gap-1.5 text-[10px] font-semibold tracking-wide px-2 py-1 rounded-full border ${style.badge}">
-            <span class="w-1.5 h-1.5 rounded-full ${style.dot}"></span>${style.label}
-          </span>
+      <div class="flex items-start justify-between gap-2">
+        <div class="min-w-0">
+          <div class="font-medium text-slate-100 truncate" title="${escapeHtml(s.name)}">${escapeHtml(s.name)}</div>
+          <div class="text-[11px] text-slate-500 truncate mono" title="${escapeHtml(s.url)}">${escapeHtml(s.url)}</div>
         </div>
-
-        ${errorLine}
-
-        <div class="grid grid-cols-2 gap-2 mt-1 text-[11px]">
-          <div class="bg-slate-950/50 rounded-lg px-2 py-1.5">
-            <div class="text-slate-500">Video</div>
-            <div class="mono text-slate-300">${s.type === "radio" ? "—" : fmtBitrate(s.videoBitrateKbps)}</div>
-          </div>
-          <div class="bg-slate-950/50 rounded-lg px-2 py-1.5">
-            <div class="text-slate-500">Audio</div>
-            <div class="mono text-slate-300">${fmtBitrate(s.audioBitrateKbps)}</div>
-          </div>
+        <span class="shrink-0 inline-flex items-center gap-1.5 text-[10px] font-semibold tracking-wide px-2 py-1 rounded-full border ${style.badge}">
+          <span class="w-1.5 h-1.5 rounded-full ${style.dot}"></span>${style.label}
+        </span>
+      </div>
+      ${errorLine}
+      <div class="grid grid-cols-2 gap-2 mt-1 text-[11px]">
+        <div class="bg-slate-950/50 rounded-lg px-2 py-1.5">
+          <div class="text-slate-500">Video</div>
+          <div class="mono text-slate-300">${s.type === "radio" ? "—" : fmtBitrate(s.videoBitrateKbps)}</div>
         </div>
-
-        <div class="text-[11px] text-slate-600 mt-1">Kiểm tra: <span class="mono">${timeAgo(s.checkedAt)}</span></div>
-      </div>`;
+        <div class="bg-slate-950/50 rounded-lg px-2 py-1.5">
+          <div class="text-slate-500">Audio</div>
+          <div class="mono text-slate-300">${fmtBitrate(s.audioBitrateKbps)}</div>
+        </div>
+      </div>
+      <div class="text-[11px] text-slate-600 mt-1">Kiểm tra: <span data-role="time" class="mono">${timeAgo(s.checkedAt)}</span></div>`;
   }
 
-  function applyFilter(list) {
-    if (!searchTerm) return list;
-    return list.filter((s) => s.name.toLowerCase().includes(searchTerm));
+  function applyCard(el, s) {
+    const style = STATUS_STYLE[s.status] || STATUS_STYLE.SUSPECT;
+    el.className = `rounded-xl border ${style.border} ${style.ring} bg-slate-900/60 p-4 flex flex-col gap-2 transition-colors`;
+    el.innerHTML = cardInner(s);
   }
 
-  function render(payload) {
-    latestPayload = payload;
+  function applyRow(el, s) {
+    const style = STATUS_STYLE[s.status] || STATUS_STYLE.SUSPECT;
+    const highlight = s.status === "DEGRADED" ? "bg-red-950/20" : s.status === "SUSPECT" ? "bg-amber-950/10" : "";
+    el.className = `grid grid-cols-[minmax(140px,1.3fr)_minmax(160px,2fr)_90px_90px_90px_130px] gap-3 items-center px-3 py-2 border-b border-slate-800/70 text-xs hover:bg-slate-800/30 transition-colors ${highlight}`;
+    el.innerHTML = `
+      <div class="font-semibold text-slate-100 truncate" title="${escapeHtml(s.name)}">${escapeHtml(s.name)}</div>
+      <a href="${escapeHtml(s.url)}" target="_blank" rel="noopener" class="text-slate-500 mono truncate hover:text-sky-400" title="${escapeHtml(s.url)}">${escapeHtml(s.url)}</a>
+      <div class="mono text-slate-300">${s.type === "radio" ? "—" : fmtBitrate(s.videoBitrateKbps)}</div>
+      <div class="mono text-slate-300">${fmtBitrate(s.audioBitrateKbps)}</div>
+      <div class="mono text-slate-600" data-role="time">${timeAgo(s.checkedAt)}</div>
+      <span class="inline-flex items-center gap-1.5 text-[10px] font-semibold tracking-wide px-2 py-1 rounded-full border w-fit ${style.badge}">
+        <span class="w-1.5 h-1.5 rounded-full ${style.dot}"></span>${style.label}
+      </span>`;
+  }
 
-    const tv = applyFilter(payload.streams.filter((s) => s.type === "tv"));
-    const radio = applyFilter(payload.streams.filter((s) => s.type === "radio"));
+  function applyAlertCard(el, s) {
+    const style = STATUS_STYLE[s.status] || STATUS_STYLE.SUSPECT;
+    const glow = s.status === "DEGRADED" ? "glow-degraded" : "glow-suspect";
+    el.className = `rounded-lg border ${style.border} ${glow} bg-slate-950/60 p-3 flex flex-col gap-1.5`;
+    el.innerHTML = `
+      <div class="flex items-start justify-between gap-2">
+        <div class="font-medium text-slate-100 truncate text-sm" title="${escapeHtml(s.name)}">${escapeHtml(s.name)}</div>
+        <span class="shrink-0 inline-flex items-center gap-1.5 text-[10px] font-semibold tracking-wide px-2 py-0.5 rounded-full border ${style.badge}">
+          <span class="w-1.5 h-1.5 rounded-full ${style.dot}"></span>${style.label}
+        </span>
+      </div>
+      ${s.lastError ? `<div class="text-[11px] text-red-300/90 leading-snug line-clamp-2" title="${escapeHtml(s.lastError)}">⚠ ${escapeHtml(s.lastError)}</div>` : ""}
+      <div class="text-[10px] text-slate-600 mt-auto">Kiểm tra: <span data-role="time">${timeAgo(s.checkedAt)}</span></div>`;
+  }
 
-    tvGrid.innerHTML = tv.map(streamCard).join("");
-    radioGrid.innerHTML = radio.map(streamCard).join("");
-    tvEmpty.hidden = tv.length > 0;
-    radioEmpty.hidden = radio.length > 0;
-    tvCount.textContent = "(" + tv.length + ")";
-    radioCount.textContent = "(" + radio.length + ")";
+  /**
+   * Đồng bộ 1 danh sách kênh vào 1 container DOM: tạo mới phần tử cho kênh chưa có, CHỈ cập nhật
+   * nội dung của kênh có dữ liệu thay đổi (so sánh signature), giữ nguyên (không đụng DOM) các kênh
+   * không đổi, và xóa phần tử của kênh không còn nằm trong danh sách lọc hiện tại.
+   */
+  function syncList(container, items, cache, applyFn, tag) {
+    const seen = new Set();
+    let prevEl = null;
 
+    for (const item of items) {
+      const key = item.name;
+      seen.add(key);
+      const sig = signature(item);
+      let entry = cache.get(key);
+
+      if (!entry) {
+        const el = document.createElement(tag || "div");
+        applyFn(el, item);
+        entry = { el, sig };
+        cache.set(key, entry);
+      } else if (entry.sig !== sig) {
+        applyFn(entry.el, item);
+        entry.sig = sig;
+      }
+
+      const referenceNode = prevEl ? prevEl.nextSibling : container.firstChild;
+      if (referenceNode !== entry.el) container.insertBefore(entry.el, referenceNode);
+      prevEl = entry.el;
+    }
+
+    for (const [key, entry] of cache) {
+      if (!seen.has(key)) {
+        entry.el.remove();
+        cache.delete(key);
+      }
+    }
+  }
+
+  function renderGroup(refs, cacheGroup, items, applyFn, tag) {
+    syncList(refs.container, items, cacheGroup, applyFn, tag);
+    refs.empty.hidden = items.length > 0;
+    refs.count.textContent = "(" + items.length + ")";
+  }
+
+  function renderActiveView(payload) {
+    const filtered = payload.streams.filter(matchesFilters);
+    const tv = filtered.filter((s) => s.type === "tv");
+    const radio = filtered.filter((s) => s.type === "radio");
+
+    if (activeView === "grid") {
+      renderGroup(gridRefs.tv, caches.grid.tv, tv, applyCard, "div");
+      renderGroup(gridRefs.radio, caches.grid.radio, radio, applyCard, "div");
+    } else {
+      renderGroup(listRefs.tv, caches.list.tv, tv, applyRow, "div");
+      renderGroup(listRefs.radio, caches.list.radio, radio, applyRow, "div");
+    }
+  }
+
+  function renderAlertZone(payload) {
+    const problems = payload.streams
+      .filter((s) => s.status !== "HEALTHY")
+      .filter((s) => !searchTerm || s.name.toLowerCase().includes(searchTerm))
+      .sort((a, b) => (a.status === b.status ? a.name.localeCompare(b.name) : a.status === "DEGRADED" ? -1 : 1));
+
+    alertZoneEl.hidden = problems.length === 0;
+    alertCountEl.textContent = "(" + problems.length + ")";
+    syncList(alertListEl, problems, caches.alert, applyAlertCard, "div");
+  }
+
+  function renderSummaryAndResources(payload) {
     const counts = { HEALTHY: 0, SUSPECT: 0, DEGRADED: 0 };
     for (const s of payload.streams) counts[s.status] = (counts[s.status] || 0) + 1;
 
@@ -192,19 +408,99 @@
       <span title="Hàng đợi ffprobe: đang chạy/đang chờ">🎬 ${r.ffprobeQueue.pending}/${r.ffprobeQueue.size}</span>
     `;
 
+    updateFilterPillLabels(counts, payload.streams.length);
     lastUpdatedEl.textContent = new Date(payload.generatedAt).toLocaleTimeString("vi-VN", { hour12: false });
   }
 
+  function updateFilterPillLabels(counts, total) {
+    statusFilterEl.querySelectorAll(".filter-pill").forEach((btn) => {
+      const f = btn.getAttribute("data-filter");
+      const label = f === "all" ? "Tất cả" : f === "issues" ? "Đang lỗi" : "Hoạt động tốt";
+      const n = f === "all" ? total : f === "issues" ? counts.SUSPECT + counts.DEGRADED : counts.HEALTHY;
+      btn.textContent = `${label} (${n})`;
+    });
+  }
+
+  function render(payload) {
+    latestPayload = payload;
+    renderSummaryAndResources(payload);
+    renderAlertZone(payload);
+    renderActiveView(payload);
+  }
+
+  // Mỗi giây chỉ ghi lại textContent của nhãn thời gian (rẻ) cho các kênh đang thực sự hiển thị
+  // trên màn hình (view đang active + alert zone) - KHÔNG chạy lại applyFn/innerHTML của cả card/row.
+  function tickTimeLabels() {
+    if (!latestPayload) return;
+    const byName = new Map(latestPayload.streams.map((s) => [s.name, s.checkedAt]));
+    const activeCaches = [caches.alert, activeView === "grid" ? caches.grid.tv : caches.list.tv, activeView === "grid" ? caches.grid.radio : caches.list.radio];
+
+    for (const cache of activeCaches) {
+      for (const [name, entry] of cache) {
+        const timeEl = entry.el.querySelector('[data-role="time"]');
+        if (timeEl) timeEl.textContent = timeAgo(byName.get(name));
+      }
+    }
+  }
+  setInterval(tickTimeLabels, 1000);
+
+  // ---- interactions ----
   searchInput.addEventListener("input", (e) => {
     searchTerm = e.target.value.trim().toLowerCase();
     if (latestPayload) render(latestPayload);
   });
 
-  // Tự cập nhật nhãn "Kiểm tra: Xs trước" mỗi giây mà không cần đợi dữ liệu mới từ server.
-  setInterval(() => {
+  statusFilterEl.addEventListener("click", (e) => {
+    const btn = e.target.closest(".filter-pill");
+    if (!btn) return;
+    statusFilter = btn.getAttribute("data-filter");
+    updatePillStyles();
     if (latestPayload) render(latestPayload);
-  }, 1000);
+  });
 
+  function updatePillStyles() {
+    statusFilterEl.querySelectorAll(".filter-pill").forEach((btn) => {
+      const active = btn.getAttribute("data-filter") === statusFilter;
+      btn.className = "filter-pill px-2.5 py-1 rounded-full border transition-colors " +
+        (active ? "bg-sky-500/20 text-sky-300 border-sky-500/50" : "bg-slate-900 text-slate-400 border-slate-700 hover:border-slate-600");
+    });
+  }
+
+  function setActiveView(view) {
+    activeView = view;
+    safeSetStorage(LS_VIEW_KEY, view);
+    viewGridEl.hidden = view !== "grid";
+    viewListEl.hidden = view !== "list";
+    viewToggleEl.querySelectorAll(".view-btn").forEach((btn) => {
+      const active = btn.getAttribute("data-view") === view;
+      btn.className = "view-btn px-2.5 py-1 rounded-md transition-colors " +
+        (active ? "bg-sky-500/20 text-sky-300" : "text-slate-400 hover:text-slate-200");
+    });
+    if (latestPayload) renderActiveView(latestPayload);
+  }
+
+  viewToggleEl.addEventListener("click", (e) => {
+    const btn = e.target.closest(".view-btn");
+    if (!btn) return;
+    setActiveView(btn.getAttribute("data-view"));
+  });
+
+  function wireCollapse(refs, group) {
+    refs.header.addEventListener("click", () => {
+      collapsedGroups[group] = !collapsedGroups[group];
+      refs.header.classList.toggle("collapsed", collapsedGroups[group]);
+      refs.body.hidden = collapsedGroups[group];
+    });
+  }
+  ["tv", "radio"].forEach((g) => {
+    wireCollapse(gridRefs[g], g + ":grid");
+    wireCollapse(listRefs[g], g + ":list");
+  });
+
+  updatePillStyles();
+  setActiveView(activeView);
+
+  // ---- kết nối dữ liệu ----
   function setConnected(connected, reconnecting) {
     connDot.className = "w-2 h-2 rounded-full " + (connected ? "bg-emerald-400" : reconnecting ? "bg-amber-400 pulse" : "bg-slate-600");
     connLabel.textContent = connected ? "Live" : reconnecting ? "Đang kết nối lại..." : "Mất kết nối";
