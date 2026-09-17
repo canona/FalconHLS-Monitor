@@ -6,7 +6,7 @@ import { logger } from "./logger/logger";
 import { startScheduler } from "./monitor/scheduler";
 import { startWebServer } from "./web/server";
 import { startEventLoopMonitor } from "./monitor/eventLoopMonitor";
-import { configureFfprobeConcurrency } from "./ffmpeg/ffprobe";
+import { configureFfprobeConcurrency, configureHostConcurrency } from "./ffmpeg/ffprobe";
 import { configureAlertManager, flushAlertsNow } from "./telegram/alertManager";
 
 async function main() {
@@ -23,6 +23,7 @@ async function main() {
 
   startEventLoopMonitor();
   configureFfprobeConcurrency(config.maxConcurrentChecks);
+  configureHostConcurrency(config.maxConcurrentPerHost);
   configureAlertManager(config.alertBatching);
 
   const port = Number(process.env.PORT) || 3000;

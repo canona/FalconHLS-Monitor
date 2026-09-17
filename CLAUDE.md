@@ -25,17 +25,28 @@ src/
 │   ├── streamChecker.ts     # HÀM THUẦN: chạy Level 1->2->3 một lần, trả StreamCheckResult.
 │   │                        #   KHÔNG quyết định alert, KHÔNG ghi state - dùng lại được cho cả
 │   │                        #   check định kỳ lẫn các lần retry.
-│   ├── errorClassifier.ts   # Phân loại SYSTEM_OVERLOAD / NETWORK / STREAM từ 1 StreamCheckResult
+│   ├── errorClassifier.ts   # Phân loại SYSTEM_OVERLOAD / NETWORK / STREAM từ 1 StreamCheckResult.
+│   │                        #   NETWORK_ERROR_PATTERN bắt CẢ errno Node.js (ETIMEDOUT...) LẪN văn
+│   │                        #   phong lỗi kết nối gốc của ffmpeg/ffprobe (Operation timed out,
+│   │                        #   Connection to tcp...) - xem mục "Bẫy kỹ thuật" #11.
 │   ├── incidentManager.ts   # State machine SUSPECT -> retry -> xác nhận DEGRADED/DOWN -> AlertManager.
 │   │                        #   Đây là nơi ra quyết định gửi alert (thay cho streamChecker cũ).
+│   │                        #   Chọn CHÍNH SÁCH RETRY riêng theo category qua getRetryPolicy():
+│   │                        #   NETWORK dùng config.retry.network (kiên nhẫn hơn, backoff dài hơn),
+│   │                        #   STREAM dùng config.retry gốc - xem mục "Bẫy kỹ thuật" #12.
 │   ├── eventLoopMonitor.ts  # Đo event-loop lag (drift sampling) + memory pressure (v8 heap_size_limit)
 │   ├── stateStore.ts        # In-memory state per stream: lastStatus, phase (STABLE/SUSPECT),
 │   │                        #   suspectAttempt, isChecking (chống chồng lấn), pendingRetryTimer...
 │   └── scheduler.ts         # setInterval per stream + p-queue Level1/2 (maxConcurrentManifestChecks).
 │                            #   Bỏ qua interval khi phase=SUSPECT hoặc isChecking=true.
 ├── ffmpeg/ffprobe.ts        # Level 3: đo bitrate thật + phát hiện lỗi giải mã (xem mục "Bẫy kỹ thuật").
-│                            #   Có queue RIÊNG (configureFfprobeConcurrency) giới hạn maxConcurrentChecks,
-│                            #   tách biệt hoàn toàn khỏi queue Level 1/2 trong scheduler.ts.
+│                            #   2 lớp hàng đợi lồng nhau khi gọi analyzeStream(): hostQueue (per-
+│                            #   hostname, configureHostConcurrency/maxConcurrentPerHost - chống origin
+│                            #   rate-limit khi nhiều kênh chung 1 origin) rồi mới tới ffprobeQueue
+│                            #   (tổng toàn hệ thống, configureFfprobeConcurrency/maxConcurrentChecks).
+│                            #   KHÔNG còn hàm probeMetadata() riêng - measureTrack() tự đọc codec/
+│                            #   sự tồn tại của track từ chính banner ffmpeg, gộp "đọc metadata" +
+│                            #   "đo bitrate/lỗi giải mã" vào 1 tiến trình/track - xem "Bẫy kỹ thuật" #13.
 ├── telegram/
 │   ├── telegramBot.ts       # Build message MarkdownV2 (buildIncidentMessage, buildDigestMessage) + gửi qua Bot API
 │   └── alertManager.ts      # Gom sự cố ĐÃ XÁC NHẬN trong alertBatching.windowMs, gộp thành 1 tin
@@ -96,6 +107,14 @@ npm start            # node dist/index.js (sau build)
 
 10. **`streamChecker.checkStream()` là hàm THUẦN (pure)** — không tự ý thêm side-effect (gọi Telegram, ghi `stateStore`) vào file này. Mọi quyết định trạng thái/alert thuộc về `incidentManager.ts`, vì `checkStream()` được gọi lại nhiều lần cho cùng 1 luồng trong lúc retry (không chỉ 1 lần/chu kỳ như trước).
 
+11. **Lỗi kết nối gốc của ffmpeg/ffprobe (VD `Connection to tcp://host:443 failed: Operation timed out`) dùng văn phong HOÀN TOÀN khác errno Node.js** (`ETIMEDOUT`, `ECONNREFUSED`...) — nếu chỉ regex theo errno Node.js, toàn bộ lỗi kết nối tới origin sẽ rớt xuống nhánh mặc định và bị gắn nhầm là `STREAM` ("Lỗi luồng HLS thực sự") thay vì `NETWORK`. Đã tái hiện thực tế: 25 kênh cùng chung 1 origin (`catchup.truyenhinhso.vn`) bị chính origin/WAF rate-limit do quá nhiều kết nối TCP dồn dập, gây báo động sai dù người xem thật không thấy vấn đề gì. `NETWORK_ERROR_PATTERN` trong `errorClassifier.ts` phải bắt cả 2 lớp văn phong.
+
+12. **KHÔNG dùng regex dò chữ "timeout" trên message để xác định `av.timedOut`** — dễ nhầm giữa 2 tình huống có ý nghĩa hoàn toàn khác nhau: (a) CHÍNH TA chủ động SIGKILL vì tiến trình không phản hồi kịp `timeoutSeconds` (dấu hiệu quá tải worker giám sát → `SYSTEM_OVERLOAD`, im lặng bỏ qua) và (b) ffmpeg TỰ báo lỗi kết nối tới origin kiểu "Operation timed out" (dấu hiệu mạng/origin, không phải máy giám sát quá tải → phải là `NETWORK`, có retry). Giải pháp: `ffprobe.ts` dùng `class WorkerTimeoutError extends Error` ném RIÊNG cho tình huống (a); `analyzeStreamInternal` dùng `err instanceof WorkerTimeoutError` (không phải regex) để set `timedOut`. Nếu sửa lại thành regex theo câu chữ, lỗi (b) sẽ bị gộp nhầm vào (a) và không bao giờ đi qua được chính sách retry NETWORK ở mục #14 dưới đây (xem `incidentManager.ts::getRetryPolicy`).
+
+13. **Mỗi lần Level 3 check 1 kênh TV có audio rendition riêng (EXT-X-MEDIA) từng mở tới 4 tiến trình ffprobe/ffmpeg = 4 kết nối TCP riêng tới CÙNG origin** (2 `probeMetadata` + 2 `measureTrack`) — với nhiều kênh chung 1 origin, tổng kết nối đồng thời có thể lên hàng chục, dễ khiến origin/WAF rate-limit. Đã gộp: xóa hẳn `probeMetadata()`, để `measureTrack()` tự đọc codec/tình trạng track từ banner ffmpeg (`Stream #0:x: Video: ...` / `Audio: ...`) ngay trong tiến trình đo bitrate — giảm còn tối đa 2 tiến trình/kênh (video + audio). Kèm theo `hostQueue` (giới hạn `maxConcurrentPerHost`, mặc định 2) lồng bên ngoài `ffprobeQueue` (giới hạn `maxConcurrentChecks` tổng) trong `ffprobe.ts::analyzeStream()` để chặn đúng nguyên nhân gốc (quá nhiều kết nối dồn dập tới CÙNG 1 hostname), không chỉ giảm nhãn hiển thị.
+
+14. **Retry/backoff KHÔNG còn dùng chung 1 chính sách cho mọi category** — `config.retry.network` (mặc định `maxRetries: 5`, `retryDelaysMs: [15000, 30000, 30000, 30000]`) áp dụng riêng cho category `NETWORK`, kiên nhẫn hơn hẳn `config.retry` gốc (mặc định `maxRetries: 3`, `[5000, 10000]`) dùng cho `STREAM` — vì lỗi kết nối origin cần thời gian dài hơn để origin/WAF "hạ nhiệt" trước khi hệ thống kết luận luồng đã chết. Nếu sửa `incidentManager.ts::processCheckResult`, luôn lấy policy qua `getRetryPolicy(category, config.retry)`, không đọc thẳng `config.retry.maxRetries`/`retryDelaysMs`.
+
 ## Loại luồng: `type: "tv" | "radio"`
 
 - `"tv"` (mặc định): bắt buộc cả Video + Audio.
@@ -104,12 +123,12 @@ npm start            # node dist/index.js (sau build)
 
 ## Trạng thái hiện tại
 
-Đã hoàn thành đầy đủ theo yêu cầu gốc + nâng cấp "Deep Diagnostic" + Web Dashboard real-time: Level 1/2/3, cảnh báo Telegram, Docker + GitHub Actions → Coolify webhook, README chi tiết, hỗ trợ TV/Radio, đo bitrate chính xác, giờ GMT+7, phân loại nguyên nhân gốc rễ (SYSTEM_OVERLOAD/NETWORK/STREAM), debounce retry (SUSPECT state machine), queue ffprobe riêng + đo event-loop lag, AlertManager gộp tin nhắn, diagnostic.log riêng, Dashboard web dark-mode qua SSE (`src/web/server.ts` + `public/index.html`). Đã test thực tế bằng luồng Apple HLS test công khai + 25 luồng production thật của người dùng, và build/chạy thử Docker image thật (không chỉ unit test). Code đã push lên `https://github.com/canona/FalconHLS-Monitor` (public, nhánh `main`).
+Đã hoàn thành đầy đủ theo yêu cầu gốc + nâng cấp "Deep Diagnostic" + Web Dashboard real-time + Basic Auth + throttling theo host: Level 1/2/3, cảnh báo Telegram, Docker + GitHub Actions → Coolify webhook, README chi tiết, hỗ trợ TV/Radio, đo bitrate chính xác, giờ GMT+7, phân loại nguyên nhân gốc rễ (SYSTEM_OVERLOAD/NETWORK/STREAM), debounce retry (SUSPECT state machine) với CHÍNH SÁCH RIÊNG theo category (NETWORK kiên nhẫn hơn STREAM, xem "Bẫy kỹ thuật" #14), queue ffprobe riêng theo cả TỔNG (`maxConcurrentChecks`) lẫn PER-HOST (`maxConcurrentPerHost`, chống origin rate-limit khi nhiều kênh chung 1 origin) + đo event-loop lag, AlertManager gộp tin nhắn, diagnostic.log riêng, Dashboard web dark-mode qua SSE + Basic Auth tùy chọn (`src/web/server.ts` + `public/index.html`). Đã test thực tế bằng luồng Apple HLS test công khai + 25 luồng production thật của người dùng (phát hiện + sửa bug thật: origin `catchup.truyenhinhso.vn` bị rate-limit do 25 kênh mở quá nhiều kết nối TCP đồng thời), và build/chạy thử Docker image thật (không chỉ unit test). Code đã push lên `https://github.com/canona/FalconHLS-Monitor` (public, nhánh `main`).
 
 Chưa làm / có thể mở rộng thêm nếu được yêu cầu:
 - Dashboard hiện là read-only (xem trạng thái), chưa có tương tác (VD nút "test lại ngay" cho 1 luồng, xác nhận đã đọc cảnh báo...).
 - Lưu lịch sử check/incident vào DB (hiện tại state + diagnostic.log là nguồn duy nhất, in-memory state mất khi restart; diagnostic.log tồn tại qua restart nhưng chỉ append-only, không query được) — dashboard hiện chỉ hiển thị trạng thái TỨC THỜI, không có biểu đồ lịch sử theo thời gian.
-- Dashboard chưa có xác thực (auth) — nếu domain public, ai có link đều xem được trạng thái giám sát. Cân nhắc thêm Basic Auth ở tầng Coolify/Traefik nếu cần riêng tư.
+- Dashboard đã có Basic Auth TÙY CHỌN (`DASHBOARD_USER`/`DASHBOARD_PASSWORD` trong `.env`, mặc định KHÔNG bật nếu thiếu 1 trong 2 biến) - xem `src/web/server.ts::basicAuthMiddleware`.
 - Alert qua kênh khác ngoài Telegram (email, Slack, webhook chung).
 - Threshold theo từng stream riêng (hiện `thresholds` là global cho toàn bộ streams).
 - Test tự động (unit/integration) — hiện tại verify bằng chạy tay + script debug, chưa có test suite trong repo.

@@ -16,12 +16,21 @@ const ThresholdsSchema = z.object({
   maxManifestLatencyMs: z.number().positive(),
 });
 
-const RetrySchema = z
-  .object({
-    maxRetries: z.number().int().min(1).default(3),
-    retryDelaysMs: z.array(z.number().positive()).min(1).default([5000, 10000]),
-  })
-  .default({});
+const RetryPolicySchema = z.object({
+  maxRetries: z.number().int().min(1).default(3),
+  retryDelaysMs: z.array(z.number().positive()).min(1).default([5000, 10000]),
+});
+
+const RetrySchema = RetryPolicySchema.extend({
+  // Chính sách retry riêng cho category NETWORK (timeout/refused khi kết nối origin, thường do
+  // WAF/anti-leech rate-limit khi giám sát nhiều kênh chung 1 origin) - kiên nhẫn hơn hẳn STREAM
+  // (lỗi nội dung thật: mất track, tụt bitrate...) để origin có đủ thời gian "hạ nhiệt" trước khi
+  // hệ thống kết luận luồng đã chết và gửi Telegram. Mặc định 5 lần, delay [15s, 30s, 30s, 30s].
+  network: RetryPolicySchema.extend({
+    maxRetries: z.number().int().min(1).default(5),
+    retryDelaysMs: z.array(z.number().positive()).min(1).default([15000, 30000, 30000, 30000]),
+  }).default({}),
+}).default({});
 
 const AlertBatchingSchema = z
   .object({
@@ -46,6 +55,9 @@ const ConfigSchema = z.object({
   ffprobeDurationSeconds: z.number().positive(),
   maxConcurrentChecks: z.number().int().positive(),
   maxConcurrentManifestChecks: z.number().int().positive().default(10),
+  // Giới hạn số kết nối Level 3 đồng thời tới CÙNG một hostname, độc lập với maxConcurrentChecks
+  // (giới hạn tổng). Xem eventLoopMonitor/ffprobe.ts::configureHostConcurrency.
+  maxConcurrentPerHost: z.number().int().positive().default(2),
   thresholds: ThresholdsSchema,
   retry: RetrySchema,
   alertBatching: AlertBatchingSchema,

@@ -1,8 +1,12 @@
 import type { StreamCheckResult, ErrorCategory, DiagnosticsConfig } from "../types";
 import { getEventLoopLagMs, getMemoryPressure } from "./eventLoopMonitor";
 
+// Bao gồm cả errno string của Node.js (ENOTFOUND, ETIMEDOUT...) LẪN văn phong lỗi kết nối gốc
+// của chính ffmpeg/ffprobe (Operation timed out, Connection to tcp://... failed, TLS...) - hai lớp
+// lỗi này thường bị bỏ sót nếu chỉ khớp theo errno Node.js, khiến lỗi mất kết nối tới origin (do
+// WAF/rate-limit hoặc quá tải kết nối) bị phân loại nhầm thành STREAM ("Lỗi luồng HLS thực sự").
 const NETWORK_ERROR_PATTERN =
-  /ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH|socket hang up|HTTP 5\d\d|Lỗi mạng|Connection refused|Name or service not known|Network is unreachable/i;
+  /ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH|socket hang up|HTTP 5\d\d|Lỗi mạng|Connection refused|Name or service not known|Network is unreachable|Operation timed out|Connection to tcp|TLS|Server returned 5|Failed to resolve hostname|I\/O error/i;
 
 export interface ClassifyDiagnostics {
   eventLoopLagMs: number;

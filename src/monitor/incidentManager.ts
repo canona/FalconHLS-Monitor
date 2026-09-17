@@ -1,4 +1,4 @@
-import type { AppConfig, StreamConfig, StreamCheckResult, ErrorCategory } from "../types";
+import type { AppConfig, StreamConfig, StreamCheckResult, ErrorCategory, RetryPolicy } from "../types";
 import { getState, setState, setLastResult } from "./stateStore";
 import { classifyError, snapshotDiagnostics, ERROR_CATEGORY_LABEL } from "./errorClassifier";
 import { enqueueAlert } from "../telegram/alertManager";
@@ -13,6 +13,16 @@ const MAX_OVERLOAD_SKIPS = 3;
 const overloadStreak = new Map<string, number>();
 
 export type RecheckFn = (stream: StreamConfig) => void;
+
+/**
+ * NETWORK dùng chính sách retry riêng, kiên nhẫn hơn (`config.retry.network`) - lỗi kết nối origin
+ * (timeout/refused do WAF/rate-limit) cần thời gian dài hơn để origin "hạ nhiệt" trước khi hệ
+ * thống kết luận luồng đã chết, khác với STREAM (lỗi nội dung thật: mất track, tụt bitrate...) vẫn
+ * dùng chính sách mặc định ở gốc `config.retry`.
+ */
+function getRetryPolicy(category: ErrorCategory, retry: AppConfig["retry"]): RetryPolicy {
+  return category === "NETWORK" ? retry.network : retry;
+}
 
 /**
  * Nhận kết quả của MỘT lần kiểm tra thô (từ scheduler định kỳ hoặc từ 1 lần retry), quyết định:
@@ -113,10 +123,11 @@ export function processCheckResult(
     return;
   }
 
-  // NETWORK hoặc STREAM -> đi vào/tiếp tục chu trình SUSPECT
+  // NETWORK hoặc STREAM -> đi vào/tiếp tục chu trình SUSPECT (mỗi category có chính sách retry riêng)
+  const policy = getRetryPolicy(category, config.retry);
   const attempt = state.phase === "SUSPECT" ? state.suspectAttempt + 1 : 1;
 
-  if (attempt < config.retry.maxRetries) {
+  if (attempt < policy.maxRetries) {
     setState(stream.name, {
       ...state,
       ...baseUpdate,
@@ -125,11 +136,11 @@ export function processCheckResult(
       suspectSince: state.suspectSince ?? now,
     });
 
-    const delay = config.retry.retryDelaysMs[attempt - 1] ?? config.retry.retryDelaysMs[config.retry.retryDelaysMs.length - 1];
+    const delay = policy.retryDelaysMs[attempt - 1] ?? policy.retryDelaysMs[policy.retryDelaysMs.length - 1];
     logDiagnostic("suspect_retry_scheduled", {
       stream: stream.name,
       attempt,
-      maxRetries: config.retry.maxRetries,
+      maxRetries: policy.maxRetries,
       delayMs: delay,
       category,
       issues: result.issues,

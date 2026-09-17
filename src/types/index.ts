@@ -14,11 +14,17 @@ export interface Thresholds {
   maxManifestLatencyMs: number;
 }
 
-export interface RetryConfig {
+export interface RetryPolicy {
   /** Tổng số lần kiểm tra liên tiếp thất bại (kể cả lần đầu) trước khi xác nhận DEGRADED/DOWN. */
   maxRetries: number;
   /** Độ trễ (ms) trước mỗi lần retry, độ dài = maxRetries - 1. VD [5000, 10000]. */
   retryDelaysMs: number[];
+}
+
+export interface RetryConfig extends RetryPolicy {
+  /** Chính sách retry riêng cho category NETWORK - kiên nhẫn hơn (backoff dài hơn, nhiều lần hơn)
+   *  vì lỗi kết nối origin (WAF/rate-limit) cần thời gian "hạ nhiệt" dài hơn lỗi nội dung thật. */
+  network: RetryPolicy;
 }
 
 export interface AlertBatchingConfig {
@@ -47,6 +53,9 @@ export interface AppConfig {
   maxConcurrentChecks: number;
   /** Số luồng được kiểm tra Level 1/2 (HTTP, nhẹ) đồng thời tối đa. */
   maxConcurrentManifestChecks: number;
+  /** Số tiến trình Level 3 chạy đồng thời tối đa tới CÙNG một hostname (chống origin rate-limit
+   *  khi nhiều kênh dùng chung 1 origin). Độc lập với `maxConcurrentChecks` (giới hạn tổng). */
+  maxConcurrentPerHost: number;
   thresholds: Thresholds;
   retry: RetryConfig;
   alertBatching: AlertBatchingConfig;
