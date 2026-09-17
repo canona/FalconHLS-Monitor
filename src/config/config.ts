@@ -55,6 +55,12 @@ const DiagnosticsSchema = z
 const ConfigSchema = z.object({
   streams: z.array(StreamSchema).min(1, "Cần khai báo ít nhất 1 luồng trong config"),
   checkIntervalSeconds: z.number().positive(),
+  // Lịch kiểm tra RIÊNG, nhanh hơn nhiều, chỉ cho Level 1 (manifest) + Level 2 (đóng băng) - hai
+  // bước này chỉ là HTTP GET nhẹ, không đụng tới hostQueue/ffprobeQueue bị giới hạn bởi origin, nên
+  // có thể chạy thường xuyên mà không gây quá tải. Mục đích: phát hiện đóng băng/lỗi manifest trong
+  // vài chục giây thay vì phải chờ tới lượt Level 3 (checkIntervalSeconds, có thể tới vài phút khi
+  // giám sát nhiều kênh chung 1 origin). Xem scheduler.ts::runFastProbe.
+  fastCheckIntervalSeconds: z.number().positive().default(15),
   cooldownMinutes: z.number().positive(),
   timeoutSeconds: z.number().positive(),
   ffprobeDurationSeconds: z.number().positive(),

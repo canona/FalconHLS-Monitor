@@ -46,6 +46,8 @@ export interface DiagnosticsConfig {
 export interface AppConfig {
   streams: StreamConfig[];
   checkIntervalSeconds: number;
+  /** Lịch riêng, nhanh hơn, chỉ cho Level 1+2 (manifest + đóng băng) - xem scheduler.ts::runFastProbe. */
+  fastCheckIntervalSeconds: number;
   cooldownMinutes: number;
   timeoutSeconds: number;
   ffprobeDurationSeconds: number;

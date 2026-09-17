@@ -12,6 +12,7 @@
     }
   ],
   "checkIntervalSeconds": 30,
+  "fastCheckIntervalSeconds": 15,
   "cooldownMinutes": 15,
   "timeoutSeconds": 10,
   "ffprobeDurationSeconds": 6,

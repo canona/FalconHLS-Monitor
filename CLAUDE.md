@@ -38,7 +38,12 @@ src/
 │   ├── stateStore.ts        # In-memory state per stream: lastStatus, phase (STABLE/SUSPECT),
 │   │                        #   suspectAttempt, isChecking (chống chồng lấn), pendingRetryTimer...
 │   └── scheduler.ts         # setInterval per stream + p-queue Level1/2 (maxConcurrentManifestChecks).
-│                            #   Bỏ qua interval khi phase=SUSPECT hoặc isChecking=true.
+│                            #   Bỏ qua interval khi phase=SUSPECT hoặc isChecking=true. Có 2 lịch
+│                            #   ĐỘC LẬP: lịch chậm (checkIntervalSeconds, Level1->2->3 đầy đủ, qua
+│                            #   runCheck) + lịch nhanh (fastCheckIntervalSeconds, CHỈ Level1+2, qua
+│                            #   runFastProbe - watchdog phát hiện sớm manifest lỗi/đóng băng, KHÔNG
+│                            #   BAO GIỜ tự ghi state, chỉ được phép kích hoạt sớm 1 lần runCheck đầy
+│                            #   đủ) - xem "Bẫy kỹ thuật" #16.
 ├── ffmpeg/ffprobe.ts        # Level 3: đo bitrate thật + phát hiện lỗi giải mã (xem mục "Bẫy kỹ thuật").
 │                            #   2 lớp hàng đợi lồng nhau khi gọi analyzeStream(): hostQueue (per-
 │                            #   hostname, configureHostConcurrency/maxConcurrentPerHost - chống origin
@@ -116,6 +121,8 @@ npm start            # node dist/index.js (sau build)
 14. **Retry/backoff KHÔNG còn dùng chung 1 chính sách cho mọi category** — `config.retry.network` (mặc định `maxRetries: 5`, `retryDelaysMs: [15000, 30000, 30000, 30000]`) áp dụng riêng cho category `NETWORK`, kiên nhẫn hơn hẳn `config.retry` gốc (mặc định `maxRetries: 3`, `[5000, 10000]`) dùng cho `STREAM` — vì lỗi kết nối origin cần thời gian dài hơn để origin/WAF "hạ nhiệt" trước khi hệ thống kết luận luồng đã chết. Nếu sửa `incidentManager.ts::processCheckResult`, luôn lấy policy qua `getRetryPolicy(category, config.retry)`, không đọc thẳng `config.retry.maxRetries`/`retryDelaysMs`.
 
 15. **`alertBatching.windowMs` mặc định là 10s, KHÔNG phải 60s như bản gốc** — mặc định cũ (60s) khiến 1 kênh lỗi ĐƠN LẺ (trường hợp phổ biến nhất) luôn phải đợi đủ 60s trong buffer trước khi `flush()` quyết định gửi tin đơn lẻ, cộng thêm thời gian xác nhận qua retry (~15-30s) → độ trễ cảm nhận được giữa lúc dashboard báo lỗi và lúc Telegram thực sự nhận tin lên tới 1-2 phút (phát hiện qua phản hồi thực tế của người dùng). `flush()` đã sẵn logic gửi ngay dạng tin đơn lẻ khi buffer chỉ có 1 sự cố lúc hết hạn window — hạ `windowMs` xuống 10s giữ nguyên khả năng gộp digest khi có sự cố diện rộng (các kênh chung origin thường xác nhận lệch nhau vài giây do scheduler dàn đều lịch, không phải cùng lúc), nhưng giảm mạnh độ trễ cho trường hợp phổ biến. Nếu cần đổi lại, sửa qua `alertBatching.windowMs` trong config, KHÔNG sửa cứng trong code.
+
+16. **`scheduler.ts::runFastProbe` (watchdog Level 1+2) CHỈ ĐƯỢC PHÉP kích hoạt sớm 1 lần `runCheck` đầy đủ, TUYỆT ĐỐI KHÔNG tự gọi `processCheckResult`/ghi state trực tiếp** — phát hiện khi điều tra nguyên nhân "4-6 phút mới thấy lỗi trên dashboard" (do `checkStream()` gộp cả Level1->2->3 vào 1 lịch duy nhất `checkIntervalSeconds`, trong khi Level1+2 chỉ cần HTTP GET nhẹ, hoàn toàn có thể chạy nhanh hơn mà không đụng origin). Lúc đầu định để watchdog tự cập nhật trạng thái OK/lỗi mỗi 15s cho nhanh, nhưng nhận ra nếu làm vậy, 1 kết quả "OK" từ Level1+2 (vốn KHÔNG hề kiểm tra Level 3) sẽ xóa mất tiến trình SUSPECT/retry đang tích lũy từ 1 lần kiểm tra Level 3 chậm hơn đang phát hiện tụt bitrate/mất track thật — vì Level1+2 "OK" không đồng nghĩa luồng thực sự ổn. Thiết kế đúng: watchdog chỉ ĐỌC state để quyết định có đáng kích hoạt sớm hay không (`phase === "STABLE" && lastStatus === "OK" && !isChecking`), và khi phát hiện bất thường chỉ gọi lại `runCheck()` - để `incidentManager` xử lý qua đúng state machine SUSPECT/retry như bình thường.
 
 ## Loại luồng: `type: "tv" | "radio"`
 
