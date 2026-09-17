@@ -4,7 +4,7 @@ dotenv.config();
 import { loadConfig } from "./config/config";
 import { logger } from "./logger/logger";
 import { startScheduler } from "./monitor/scheduler";
-import { startHealthServer } from "./monitor/healthServer";
+import { startWebServer } from "./web/server";
 import { startEventLoopMonitor } from "./monitor/eventLoopMonitor";
 import { configureFfprobeConcurrency } from "./ffmpeg/ffprobe";
 import { configureAlertManager, flushAlertsNow } from "./telegram/alertManager";
@@ -26,7 +26,7 @@ async function main() {
   configureAlertManager(config.alertBatching);
 
   const port = Number(process.env.PORT) || 3000;
-  startHealthServer(port);
+  startWebServer(port, config);
 
   const scheduler = startScheduler(config);
 

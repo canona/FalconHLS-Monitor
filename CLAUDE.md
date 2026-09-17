@@ -31,10 +31,8 @@ src/
 │   ├── eventLoopMonitor.ts  # Đo event-loop lag (drift sampling) + memory pressure (v8 heap_size_limit)
 │   ├── stateStore.ts        # In-memory state per stream: lastStatus, phase (STABLE/SUSPECT),
 │   │                        #   suspectAttempt, isChecking (chống chồng lấn), pendingRetryTimer...
-│   ├── scheduler.ts         # setInterval per stream + p-queue Level1/2 (maxConcurrentManifestChecks).
-│   │                        #   Bỏ qua interval khi phase=SUSPECT hoặc isChecking=true.
-│   └── healthServer.ts      # HTTP /health — trạng thái từng luồng (bao gồm phase/suspectAttempt)
-│                            #   + tài nguyên hệ thống (eventLoopLagMs, heapUsedRatio, ffprobeQueue)
+│   └── scheduler.ts         # setInterval per stream + p-queue Level1/2 (maxConcurrentManifestChecks).
+│                            #   Bỏ qua interval khi phase=SUSPECT hoặc isChecking=true.
 ├── ffmpeg/ffprobe.ts        # Level 3: đo bitrate thật + phát hiện lỗi giải mã (xem mục "Bẫy kỹ thuật").
 │                            #   Có queue RIÊNG (configureFfprobeConcurrency) giới hạn maxConcurrentChecks,
 │                            #   tách biệt hoàn toàn khỏi queue Level 1/2 trong scheduler.ts.
@@ -42,11 +40,21 @@ src/
 │   ├── telegramBot.ts       # Build message MarkdownV2 (buildIncidentMessage, buildDigestMessage) + gửi qua Bot API
 │   └── alertManager.ts      # Gom sự cố ĐÃ XÁC NHẬN trong alertBatching.windowMs, gộp thành 1 tin
 │                            #   digest nếu > alertBatching.minCountToDigest, else gửi riêng lẻ.
+├── web/server.ts            # Express: phục vụ public/index.html (dashboard) + GET /api/status (JSON)
+│                            #   + GET /api/events (SSE, đẩy lại mỗi 3s) + GET /health (giữ cho Docker
+│                            #   HEALTHCHECK). CHẠY CHUNG 1 PORT với API - không mở port riêng cho dashboard.
+│                            #   Đã thay thế hoàn toàn monitor/healthServer.ts cũ (đã xóa file đó).
 ├── logger/
 │   ├── logger.ts             # Log vận hành chính (console)
 │   └── diagnosticLogger.ts   # Log riêng ra file diagnostic.log (JSON) - retry, executionMs, phân loại lỗi...
 └── index.ts                 # Entry point, wiring (startEventLoopMonitor, configureFfprobeConcurrency,
-                              #   configureAlertManager), xử lý SIGINT/SIGTERM (flush alert trước khi thoát)
+                              #   configureAlertManager, startWebServer), xử lý SIGINT/SIGTERM (flush alert trước khi thoát)
+
+public/index.html             # Dashboard tĩnh (HTML + Tailwind CDN + vanilla JS, KHÔNG qua build step của
+                               #   tsc) - Dockerfile COPY riêng thư mục này vào image (COPY public ./public).
+                               #   __dirname trong web/server.ts trỏ tới nó bằng "../../public" - luôn đúng
+                               #   dù chạy qua ts-node-dev (src/web/server.ts) hay dist đã build
+                               #   (dist/web/server.js), vì cả 2 đều cách project root đúng 2 cấp.
 ```
 
 ## Lệnh thường dùng
@@ -96,11 +104,12 @@ npm start            # node dist/index.js (sau build)
 
 ## Trạng thái hiện tại
 
-Đã hoàn thành đầy đủ theo yêu cầu gốc + nâng cấp "Deep Diagnostic": Level 1/2/3, cảnh báo Telegram, Docker + GitHub Actions → Coolify webhook, README chi tiết, hỗ trợ TV/Radio, đo bitrate chính xác, giờ GMT+7, phân loại nguyên nhân gốc rễ (SYSTEM_OVERLOAD/NETWORK/STREAM), debounce retry (SUSPECT state machine), queue ffprobe riêng + đo event-loop lag, AlertManager gộp tin nhắn, diagnostic.log riêng. Đã test thực tế bằng luồng Apple HLS test công khai + 25 luồng production thật của người dùng (không chỉ unit test). Code đã push lên `https://github.com/canona/FalconHLS-Monitor` (public, nhánh `main`).
+Đã hoàn thành đầy đủ theo yêu cầu gốc + nâng cấp "Deep Diagnostic" + Web Dashboard real-time: Level 1/2/3, cảnh báo Telegram, Docker + GitHub Actions → Coolify webhook, README chi tiết, hỗ trợ TV/Radio, đo bitrate chính xác, giờ GMT+7, phân loại nguyên nhân gốc rễ (SYSTEM_OVERLOAD/NETWORK/STREAM), debounce retry (SUSPECT state machine), queue ffprobe riêng + đo event-loop lag, AlertManager gộp tin nhắn, diagnostic.log riêng, Dashboard web dark-mode qua SSE (`src/web/server.ts` + `public/index.html`). Đã test thực tế bằng luồng Apple HLS test công khai + 25 luồng production thật của người dùng, và build/chạy thử Docker image thật (không chỉ unit test). Code đã push lên `https://github.com/canona/FalconHLS-Monitor` (public, nhánh `main`).
 
 Chưa làm / có thể mở rộng thêm nếu được yêu cầu:
-- Dashboard/UI xem trạng thái (hiện chỉ có `/health` JSON, đã giàu thông tin hơn: phase, suspectAttempt, resource stats nhưng vẫn là JSON thô, không có UI).
-- Lưu lịch sử check/incident vào DB (hiện tại state + diagnostic.log là nguồn duy nhất, in-memory state mất khi restart; diagnostic.log tồn tại qua restart nhưng chỉ append-only, không query được).
+- Dashboard hiện là read-only (xem trạng thái), chưa có tương tác (VD nút "test lại ngay" cho 1 luồng, xác nhận đã đọc cảnh báo...).
+- Lưu lịch sử check/incident vào DB (hiện tại state + diagnostic.log là nguồn duy nhất, in-memory state mất khi restart; diagnostic.log tồn tại qua restart nhưng chỉ append-only, không query được) — dashboard hiện chỉ hiển thị trạng thái TỨC THỜI, không có biểu đồ lịch sử theo thời gian.
+- Dashboard chưa có xác thực (auth) — nếu domain public, ai có link đều xem được trạng thái giám sát. Cân nhắc thêm Basic Auth ở tầng Coolify/Traefik nếu cần riêng tư.
 - Alert qua kênh khác ngoài Telegram (email, Slack, webhook chung).
 - Threshold theo từng stream riêng (hiện `thresholds` là global cho toàn bộ streams).
 - Test tự động (unit/integration) — hiện tại verify bằng chạy tay + script debug, chưa có test suite trong repo.

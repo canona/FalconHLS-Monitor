@@ -25,7 +25,7 @@ const RetrySchema = z
 
 const AlertBatchingSchema = z
   .object({
-    windowMs: z.number().positive().default(12000),
+    windowMs: z.number().positive().default(60000),
     minCountToDigest: z.number().int().positive().default(3),
   })
   .default({});

@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<title>FalconHLS Monitor — Dashboard</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  :root { color-scheme: dark; }
+  body { background:#0b0f14; }
+  ::-webkit-scrollbar { width:8px; height:8px; }
+  ::-webkit-scrollbar-thumb { background:#2a3542; border-radius:4px; }
+  @keyframes pulse-dot { 0%,100%{opacity:1;} 50%{opacity:.35;} }
+  .pulse { animation: pulse-dot 1.6s ease-in-out infinite; }
+  @keyframes glow-red {
+    0%,100% { box-shadow: 0 0 0 rgba(220,38,38,0); }
+    50% { box-shadow: 0 0 14px rgba(220,38,38,.55); }
+  }
+  .glow-degraded { animation: glow-red 2.2s ease-in-out infinite; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+</style>
+</head>
+<body class="min-h-screen bg-[#0b0f14] text-slate-200">
+
+<div style="padding-top: env(safe-area-inset-top,0px)"></div>
+
+<header class="sticky top-0 z-20 border-b border-slate-800 bg-[#0b0f14]/90 backdrop-blur">
+  <div class="max-w-[1500px] mx-auto px-4 sm:px-6 py-3 flex flex-wrap items-center gap-x-6 gap-y-2">
+    <div class="flex items-center gap-2 shrink-0">
+      <span class="text-2xl">🦅</span>
+      <div>
+        <h1 class="text-base sm:text-lg font-semibold text-slate-100 leading-tight">FalconHLS Monitor</h1>
+        <p class="text-[11px] text-slate-500 leading-tight">StreamGuard HLS — Giám sát thời gian thực</p>
+      </div>
+    </div>
+
+    <div class="flex items-center gap-2 text-xs">
+      <span id="conn-dot" class="w-2 h-2 rounded-full bg-slate-600"></span>
+      <span id="conn-label" class="text-slate-400">Đang kết nối...</span>
+    </div>
+
+    <div id="summary" class="flex items-center gap-3 text-xs sm:text-sm ml-auto"></div>
+
+    <div id="resources" class="hidden md:flex items-center gap-4 text-[11px] text-slate-500 mono"></div>
+
+    <input
+      id="search"
+      type="text"
+      placeholder="Tìm kênh..."
+      class="w-full sm:w-52 bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-sm placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-sky-600"
+    />
+  </div>
+</header>
+
+<main class="max-w-[1500px] mx-auto px-4 sm:px-6 py-6 space-y-8">
+  <section>
+    <h2 class="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-slate-400 mb-3">
+      📺 Truyền hình (TV) <span id="tv-count" class="text-slate-600 font-normal normal-case">(0)</span>
+    </h2>
+    <div id="tv-grid" class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"></div>
+    <p id="tv-empty" hidden class="text-sm text-slate-600 italic">Không có kênh TV nào.</p>
+  </section>
+
+  <section>
+    <h2 class="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-slate-400 mb-3">
+      📻 Phát thanh (Radio) <span id="radio-count" class="text-slate-600 font-normal normal-case">(0)</span>
+    </h2>
+    <div id="radio-grid" class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"></div>
+    <p id="radio-empty" hidden class="text-sm text-slate-600 italic">Không có kênh Radio nào.</p>
+  </section>
+</main>
+
+<footer class="max-w-[1500px] mx-auto px-4 sm:px-6 pb-8 text-[11px] text-slate-600">
+  Cập nhật lần cuối: <span id="last-updated" class="mono">-</span> · Tự động làm mới qua Server-Sent Events
+</footer>
+
+<div style="padding-bottom: env(safe-area-inset-bottom,0px)"></div>
+
+<script>
+(function () {
+  "use strict";
+
+  const STATUS_STYLE = {
+    HEALTHY:  { label: "HOẠT ĐỘNG TỐT", dot: "bg-emerald-400", badge: "bg-emerald-500/15 text-emerald-400 border-emerald-500/40", border: "border-emerald-700/40", ring: "" },
+    SUSPECT:  { label: "ĐANG XÁC MINH", dot: "bg-amber-400 pulse", badge: "bg-amber-500/15 text-amber-400 border-amber-500/40", border: "border-amber-600/50", ring: "" },
+    DEGRADED: { label: "LỖI", dot: "bg-red-500 pulse", badge: "bg-red-600/20 text-red-400 border-red-600/50", border: "border-red-700/70", ring: "glow-degraded" },
+  };
+
+  const tvGrid = document.getElementById("tv-grid");
+  const radioGrid = document.getElementById("radio-grid");
+  const tvEmpty = document.getElementById("tv-empty");
+  const radioEmpty = document.getElementById("radio-empty");
+  const tvCount = document.getElementById("tv-count");
+  const radioCount = document.getElementById("radio-count");
+  const summaryEl = document.getElementById("summary");
+  const resourcesEl = document.getElementById("resources");
+  const lastUpdatedEl = document.getElementById("last-updated");
+  const connDot = document.getElementById("conn-dot");
+  const connLabel = document.getElementById("conn-label");
+  const searchInput = document.getElementById("search");
+
+  let latestPayload = null;
+  let searchTerm = "";
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+
+  function timeAgo(iso) {
+    if (!iso) return "chưa có dữ liệu";
+    const diffMs = Date.now() - new Date(iso).getTime();
+    const s = Math.max(0, Math.floor(diffMs / 1000));
+    if (s < 5) return "vừa xong";
+    if (s < 60) return s + "s trước";
+    const m = Math.floor(s / 60);
+    if (m < 60) return m + "p trước";
+    const h = Math.floor(m / 60);
+    return h + "h trước";
+  }
+
+  function fmtBitrate(kbps) {
+    if (kbps === null || kbps === undefined) return "—";
+    return kbps >= 1000 ? (kbps / 1000).toFixed(2) + " Mbps" : Math.round(kbps) + " kbps";
+  }
+
+  function streamCard(s) {
+    const style = STATUS_STYLE[s.status] || STATUS_STYLE.SUSPECT;
+    const errorLine = s.status !== "HEALTHY" && s.lastError
+      ? `<div class="mt-2 text-[12px] text-red-400/90 bg-red-950/40 border border-red-900/50 rounded px-2 py-1 leading-snug">⚠ ${escapeHtml(s.lastError)}</div>`
+      : "";
+
+    return `
+      <div class="rounded-xl border ${style.border} ${style.ring} bg-slate-900/60 p-4 flex flex-col gap-2 transition-colors" data-name="${escapeHtml(s.name.toLowerCase())}">
+        <div class="flex items-start justify-between gap-2">
+          <div class="min-w-0">
+            <div class="font-medium text-slate-100 truncate" title="${escapeHtml(s.name)}">${escapeHtml(s.name)}</div>
+            <div class="text-[11px] text-slate-500 truncate mono" title="${escapeHtml(s.url)}">${escapeHtml(s.url)}</div>
+          </div>
+          <span class="shrink-0 inline-flex items-center gap-1.5 text-[10px] font-semibold tracking-wide px-2 py-1 rounded-full border ${style.badge}">
+            <span class="w-1.5 h-1.5 rounded-full ${style.dot}"></span>${style.label}
+          </span>
+        </div>
+
+        ${errorLine}
+
+        <div class="grid grid-cols-2 gap-2 mt-1 text-[11px]">
+          <div class="bg-slate-950/50 rounded-lg px-2 py-1.5">
+            <div class="text-slate-500">Video</div>
+            <div class="mono text-slate-300">${s.type === "radio" ? "—" : fmtBitrate(s.videoBitrateKbps)}</div>
+          </div>
+          <div class="bg-slate-950/50 rounded-lg px-2 py-1.5">
+            <div class="text-slate-500">Audio</div>
+            <div class="mono text-slate-300">${fmtBitrate(s.audioBitrateKbps)}</div>
+          </div>
+        </div>
+
+        <div class="text-[11px] text-slate-600 mt-1">Kiểm tra: <span class="mono">${timeAgo(s.checkedAt)}</span></div>
+      </div>`;
+  }
+
+  function applyFilter(list) {
+    if (!searchTerm) return list;
+    return list.filter((s) => s.name.toLowerCase().includes(searchTerm));
+  }
+
+  function render(payload) {
+    latestPayload = payload;
+
+    const tv = applyFilter(payload.streams.filter((s) => s.type === "tv"));
+    const radio = applyFilter(payload.streams.filter((s) => s.type === "radio"));
+
+    tvGrid.innerHTML = tv.map(streamCard).join("");
+    radioGrid.innerHTML = radio.map(streamCard).join("");
+    tvEmpty.hidden = tv.length > 0;
+    radioEmpty.hidden = radio.length > 0;
+    tvCount.textContent = "(" + tv.length + ")";
+    radioCount.textContent = "(" + radio.length + ")";
+
+    const counts = { HEALTHY: 0, SUSPECT: 0, DEGRADED: 0 };
+    for (const s of payload.streams) counts[s.status] = (counts[s.status] || 0) + 1;
+
+    summaryEl.innerHTML = `
+      <span class="inline-flex items-center gap-1.5 text-emerald-400"><span class="w-2 h-2 rounded-full bg-emerald-400"></span>${counts.HEALTHY}</span>
+      <span class="inline-flex items-center gap-1.5 text-amber-400"><span class="w-2 h-2 rounded-full bg-amber-400"></span>${counts.SUSPECT}</span>
+      <span class="inline-flex items-center gap-1.5 text-red-400"><span class="w-2 h-2 rounded-full bg-red-400"></span>${counts.DEGRADED}</span>
+    `;
+
+    const r = payload.resources;
+    resourcesEl.innerHTML = `
+      <span title="Event-loop lag">⏱ ${r.eventLoopLagMs}ms</span>
+      <span title="Heap used / heap limit">🧠 ${(r.heapUsedRatio * 100).toFixed(1)}%</span>
+      <span title="Hàng đợi ffprobe: đang chạy/đang chờ">🎬 ${r.ffprobeQueue.pending}/${r.ffprobeQueue.size}</span>
+    `;
+
+    lastUpdatedEl.textContent = new Date(payload.generatedAt).toLocaleTimeString("vi-VN", { hour12: false });
+  }
+
+  searchInput.addEventListener("input", (e) => {
+    searchTerm = e.target.value.trim().toLowerCase();
+    if (latestPayload) render(latestPayload);
+  });
+
+  // Tự cập nhật nhãn "Kiểm tra: Xs trước" mỗi giây mà không cần đợi dữ liệu mới từ server.
+  setInterval(() => {
+    if (latestPayload) render(latestPayload);
+  }, 1000);
+
+  function setConnected(connected, reconnecting) {
+    connDot.className = "w-2 h-2 rounded-full " + (connected ? "bg-emerald-400" : reconnecting ? "bg-amber-400 pulse" : "bg-slate-600");
+    connLabel.textContent = connected ? "Live" : reconnecting ? "Đang kết nối lại..." : "Mất kết nối";
+  }
+
+  function connectSSE() {
+    const es = new EventSource("/api/events");
+
+    es.onopen = () => setConnected(true, false);
+    es.onmessage = (ev) => {
+      try { render(JSON.parse(ev.data)); } catch (err) { console.error("Payload không hợp lệ", err); }
+    };
+    es.onerror = () => {
+      setConnected(false, true);
+      es.close();
+      setTimeout(connectSSE, 3000);
+    };
+  }
+
+  // Fallback: nếu trình duyệt/proxy không hỗ trợ SSE, chuyển sang polling.
+  function pollFallback() {
+    setConnected(false, true);
+    fetch("/api/status")
+      .then((r) => r.json())
+      .then((data) => { setConnected(true, false); render(data); })
+      .catch(() => setConnected(false, true))
+      .finally(() => setTimeout(pollFallback, 5000));
+  }
+
+  if (typeof EventSource !== "undefined") {
+    connectSSE();
+  } else {
+    pollFallback();
+  }
+})();
+</script>
+</body>
+</html>

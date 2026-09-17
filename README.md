@@ -47,11 +47,14 @@ StreamGuard-HLS/
 ├── src/
 │   ├── config/          # Nạp & validate config.json (zod)
 │   ├── ffmpeg/           # Level 3: gọi ffprobe/ffmpeg qua child_process
-│   ├── logger/           # Structured logging (Winston)
-│   ├── monitor/          # Scheduler, worker queue, Level 1/2, parser m3u8, state
-│   ├── telegram/         # Gửi cảnh báo Telegram (Markdown)
+│   ├── logger/           # Structured logging (Winston) + diagnostic.log riêng
+│   ├── monitor/          # Scheduler, worker queue, Level 1/2/3, incident state machine
+│   ├── telegram/         # Build message + gửi Telegram (MarkdownV2), gộp cảnh báo (AlertManager)
+│   ├── web/              # Express server: dashboard tĩnh + /api/status + /api/events (SSE)
 │   ├── types/            # Định nghĩa type dùng chung
 │   └── index.ts          # Entry point
+├── public/
+│   └── index.html         # Dashboard tĩnh (Tailwind CDN + vanilla JS, không build step)
 ├── config.example.json    # File cấu hình mẫu, có track trong git (không hardcode trong code)
 ├── config.json            # File cấu hình thật của bạn — gitignore, KHÔNG commit lên repo
 ├── .env.example           # Mẫu biến môi trường
@@ -70,8 +73,9 @@ StreamGuard-HLS/
 | Worker queue        | `p-queue`                                    |
 | HTTP client         | `axios`                                      |
 | Validate config     | `zod`                                        |
-| Logging             | `winston` (JSON structured log ở production) |
-| Cảnh báo            | Telegram Bot API (`sendMessage`, Markdown)   |
+| Logging             | `winston` (JSON structured log ở production, + file riêng `diagnostic.log`) |
+| Web Dashboard       | `express` (API + static) + Server-Sent Events, frontend HTML/Tailwind CDN/vanilla JS |
+| Cảnh báo            | Telegram Bot API (`sendMessage`, MarkdownV2), gộp qua AlertManager |
 | Container           | Docker (Alpine + ffmpeg)                     |
 | CI/CD               | GitHub Actions → Webhook Coolify             |
 
@@ -107,7 +111,7 @@ StreamGuard-HLS/
 | `thresholds.maxManifestLatencyMs`   | number    | Độ trễ tối đa (ms) khi tải manifest trước khi bị coi là suy giảm (CDN/mạng chậm).                    |
 | `retry.maxRetries`                  | number    | *(mới, mặc định `3`)* Tổng số lần kiểm tra liên tiếp thất bại (kể cả lần đầu) trước khi XÁC NHẬN sự cố và chuẩn bị gửi cảnh báo. Trước khi đủ số lần này, luồng ở trạng thái nội bộ `SUSPECT` — chưa gửi Telegram, chỉ retry và ghi diagnostic log. |
 | `retry.retryDelaysMs`               | number[]  | *(mới, mặc định `[5000, 10000]`)* Độ trễ (ms) trước mỗi lần retry, độ dài = `maxRetries - 1`. VD với `maxRetries: 3`: thất bại lần 1 → đợi 5s → thử lại (lần 2) → nếu vẫn lỗi đợi 10s → thử lại (lần 3) → nếu vẫn lỗi mới xác nhận. |
-| `alertBatching.windowMs`            | number    | *(mới, mặc định `12000`)* Khung thời gian (ms) AlertManager gom các sự cố ĐÃ XÁC NHẬN lại trước khi quyết định gửi. |
+| `alertBatching.windowMs`            | number    | *(mới, mặc định `60000` = 1 phút)* Khung thời gian (ms) AlertManager gom các sự cố ĐÃ XÁC NHẬN lại trước khi quyết định gửi. |
 | `alertBatching.minCountToDigest`    | number    | *(mới, mặc định `3`)* Nếu số sự cố xác nhận trong 1 khung `windowMs` **lớn hơn** giá trị này, gộp thành 1 tin nhắn "CẢNH BÁO DIỆN RỘNG" duy nhất thay vì gửi riêng từng tin. |
 | `diagnostics.eventLoopLagThresholdMs` | number  | *(mới, mặc định `200`)* Event-loop lag (ms) vượt ngưỡng này tại thời điểm 1 lần check thất bại → phân loại nguyên nhân là `SYSTEM_OVERLOAD` (không gửi Telegram, chỉ log). |
 | `diagnostics.memoryHeapUsedRatioThreshold` | number | *(mới, mặc định `0.9`)* Tỉ lệ `used_heap_size / heap_size_limit` (giới hạn heap thật của V8, **không** phải `heapUsed/heapTotal` — chỉ số đó nhiễu và gây false positive) vượt ngưỡng này → cũng tính là `SYSTEM_OVERLOAD`. |
@@ -221,31 +225,71 @@ Mỗi khi có `push` vào nhánh `main`:
 
 ---
 
-## 5. Định dạng cảnh báo Telegram
+## 5. Web Dashboard (Real-time)
 
-**Khi phát hiện suy giảm:**
-```
-🔴 CẢNH BÁO: Luồng Demo-Channel-1 bị suy giảm!
-📉 Chi tiết: Bitrate video thực tế (200kbps) < Ngưỡng (400kbps)
-🕐 Thời điểm: 2026-09-17T10:00:00.000Z
+### 5.1. Tổng quan
+
+Ứng dụng phục vụ luôn một Dashboard web (dark mode) chạy **chung 1 cổng** với API/health check (`PORT`, mặc định `3000`) — không cần mở thêm port riêng. Truy cập `http://localhost:3000/` (local) hoặc domain đã trỏ trên Coolify (VD `https://falconhlsmonitor.vtcdigital.top/`) để xem trạng thái toàn bộ luồng theo thời gian thực, không cần chờ Telegram.
+
+- **Backend:** Express (`src/web/server.ts`), phục vụ file tĩnh trong `public/` + 3 route:
+  - `GET /` — trang dashboard (`public/index.html`).
+  - `GET /api/status` — JSON trạng thái toàn bộ luồng tại thời điểm gọi (dùng cho polling/tích hợp hệ thống khác).
+  - `GET /api/events` — **Server-Sent Events**: đẩy lại toàn bộ trạng thái mỗi 3 giây, dashboard tự cập nhật không cần tải lại trang. Nếu trình duyệt/proxy không hỗ trợ SSE, JS tự động chuyển sang polling `/api/status` mỗi 5 giây (fallback, xem `public/index.html`).
+  - `GET /health` — giữ nguyên cho Docker `HEALTHCHECK`, nay trả kèm luôn dữ liệu dashboard.
+- **Frontend:** 1 file tĩnh `public/index.html` (HTML + Tailwind CDN + vanilla JS, không build step, không framework) — do Dockerfile `COPY public ./public` trực tiếp vào image, không qua `tsc`.
+
+### 5.2. Dữ liệu mỗi luồng (`/api/status`)
+
+```json
+{
+  "name": "VOV1", "url": "...", "type": "radio",
+  "status": "HEALTHY",       // HEALTHY | SUSPECT | DEGRADED — rút gọn cho dashboard
+  "rawStatus": "OK",         // OK | DEGRADED | DOWN — trạng thái chi tiết gốc
+  "lastError": null,          // issue đầu tiên của lần check gần nhất, null nếu không có
+  "videoBitrateKbps": null,   // null với luồng radio
+  "audioBitrateKbps": 128.4,
+  "checkedAt": "2026-09-17T03:25:10.827Z"
+}
 ```
 
-**Khi mất kết nối manifest:**
-```
-🔴 CẢNH BÁO: Luồng Demo-Channel-1 mất kết nối!
-📉 Chi tiết: HTTP 404 khi lấy manifest
-🕐 Thời điểm: 2026-09-17T10:00:00.000Z
-```
+`status` ánh xạ từ state nội bộ: `SUSPECT` khi luồng đang trong chu trình retry/debounce (xem mục 2.1) bất kể trạng thái xác nhận trước đó là gì; `HEALTHY`/`DEGRADED` phản ánh `rawStatus` đã XÁC NHẬN (`OK` hay `DEGRADED`/`DOWN`) khi không còn đang xác minh.
 
-**Khi phục hồi:**
-```
-🟢 PHỤC HỒI: Luồng Demo-Channel-1 đã ổn định.
-🕐 Thời điểm: 2026-09-17T10:05:00.000Z
-```
+### 5.3. Trỏ domain trên Coolify
+
+`Dockerfile` đã `EXPOSE 3000` sẵn — trên Coolify chỉ cần vào **Domains** của Application, thêm `falconhlsmonitor.vtcdigital.top` và trỏ vào port `3000` (cổng ứng dụng đang nghe, không phải cổng ngoài). Coolify (qua Traefik) tự cấp SSL và route domain vào đúng port này — dashboard, API và health check đều dùng chung 1 port nên không cần cấu hình thêm route nào khác.
 
 ---
 
-## 6. Lưu ý vận hành
+## 6. Định dạng cảnh báo Telegram
+
+**Khi phát hiện sự cố (đã qua debounce — xem mục 2.1), gửi đơn lẻ (≤ `alertBatching.minCountToDigest` sự cố trong `alertBatching.windowMs`):**
+```
+🔴 CẢNH BÁO: Luồng VOV2 mất kết nối!
+🏷 Nguyên nhân: Lỗi luồng HLS thực sự
+📉 Chi tiết: HTTP 404 khi lấy manifest
+🔁 Đã xác nhận sau 3 lần kiểm tra liên tiếp
+🕐 Thời điểm: 2026-09-17 10:00:00 (GMT+7)
+```
+
+**Khi nhiều luồng cùng gặp sự cố trong 1 khung `alertBatching.windowMs` (mặc định 1 phút), vượt `alertBatching.minCountToDigest` (mặc định 3) — gộp thành 1 tin duy nhất:**
+```
+🔴 CẢNH BÁO DIỆN RỘNG (Gộp)
+Đang có 7 luồng gặp sự cố cùng lúc.
+📉 Chi tiết: Kênh A (Mất track Video), Kênh B (ffprobe timeout...), Kênh C (HTTP 404 khi lấy manifest)...
+🕐 Thời điểm: 2026-09-17 10:00:00 (GMT+7)
+```
+
+**Khi phục hồi (gửi ngay, không qua batching):**
+```
+🟢 PHỤC HỒI: Luồng VOV2 đã ổn định.
+🕐 Thời điểm: 2026-09-17 10:05:00 (GMT+7)
+```
+
+> Cảnh báo `SYSTEM_OVERLOAD` (nghi ngờ chính hệ thống giám sát quá tải) **không bao giờ** xuất hiện ở Telegram — chỉ ghi log server + `diagnostic.log` (xem mục 2.1).
+
+---
+
+## 7. Lưu ý vận hành
 
 - Nếu thiếu `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID`, hệ thống vẫn tiếp tục giám sát và ghi log đầy đủ, chỉ riêng bước gửi Telegram sẽ bị bỏ qua (log lỗi, không crash).
 - Mọi lỗi từ `ffmpeg`/`ffprobe` (treo tiến trình, mạng chập chờn) đều có timeout cứng (`timeoutSeconds`) và được bắt tại từng lớp (`streamChecker`, `scheduler`), không làm sập toàn bộ tiến trình Node.js.

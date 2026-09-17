@@ -28,7 +28,7 @@
     "retryDelaysMs": [5000, 10000]
   },
   "alertBatching": {
-    "windowMs": 12000,
+    "windowMs": 60000,
     "minCountToDigest": 3
   },
   "diagnostics": {
