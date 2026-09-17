@@ -114,7 +114,7 @@ StreamGuard-HLS/
 | `retry.retryDelaysMs`               | number[]  | *(mới, mặc định `[5000, 10000]`)* Độ trễ (ms) trước mỗi lần retry của category `STREAM`, độ dài = `maxRetries - 1`. VD với `maxRetries: 3`: thất bại lần 1 → đợi 5s → thử lại (lần 2) → nếu vẫn lỗi đợi 10s → thử lại (lần 3) → nếu vẫn lỗi mới xác nhận. |
 | `retry.network.maxRetries`          | number    | *(mới, mặc định `5`)* Chính sách retry RIÊNG cho category **`NETWORK`** (timeout/refused khi kết nối origin — thường do origin/WAF rate-limit khi giám sát nhiều kênh chung 1 origin). Kiên nhẫn hơn hẳn `STREAM` để origin có đủ thời gian "hạ nhiệt" trước khi hệ thống kết luận luồng đã chết và gửi Telegram. |
 | `retry.network.retryDelaysMs`       | number[]  | *(mới, mặc định `[15000, 30000, 30000, 30000]`)* Độ trễ (ms) trước mỗi lần retry của category `NETWORK` — dài hơn hẳn `STREAM` (15s rồi 30s thay vì 5s/10s). |
-| `alertBatching.windowMs`            | number    | *(mới, mặc định `60000` = 1 phút)* Khung thời gian (ms) AlertManager gom các sự cố ĐÃ XÁC NHẬN lại trước khi quyết định gửi. |
+| `alertBatching.windowMs`            | number    | *(mới, mặc định `10000` = 10 giây)* Khung thời gian (ms) AlertManager gom các sự cố ĐÃ XÁC NHẬN lại trước khi quyết định gửi. Nếu hết hạn mà chỉ có 1 sự cố trong buffer, gửi ngay dưới dạng tin đơn lẻ (không đợi thêm) — giá trị này chỉ ảnh hưởng tới việc "có kênh khác lỗi cùng lúc để gộp digest hay không", không làm chậm kênh lỗi đơn lẻ quá lâu. |
 | `alertBatching.minCountToDigest`    | number    | *(mới, mặc định `3`)* Nếu số sự cố xác nhận trong 1 khung `windowMs` **lớn hơn** giá trị này, gộp thành 1 tin nhắn "CẢNH BÁO DIỆN RỘNG" duy nhất thay vì gửi riêng từng tin. |
 | `diagnostics.eventLoopLagThresholdMs` | number  | *(mới, mặc định `200`)* Event-loop lag (ms) vượt ngưỡng này tại thời điểm 1 lần check thất bại → phân loại nguyên nhân là `SYSTEM_OVERLOAD` (không gửi Telegram, chỉ log). |
 | `diagnostics.memoryHeapUsedRatioThreshold` | number | *(mới, mặc định `0.9`)* Tỉ lệ `used_heap_size / heap_size_limit` (giới hạn heap thật của V8, **không** phải `heapUsed/heapTotal` — chỉ số đó nhiễu và gây false positive) vượt ngưỡng này → cũng tính là `SYSTEM_OVERLOAD`. |
@@ -274,7 +274,7 @@ Mỗi khi có `push` vào nhánh `main`:
 🕐 Thời điểm: 2026-09-17 10:00:00 (GMT+7)
 ```
 
-**Khi nhiều luồng cùng gặp sự cố trong 1 khung `alertBatching.windowMs` (mặc định 1 phút), vượt `alertBatching.minCountToDigest` (mặc định 3) — gộp thành 1 tin duy nhất:**
+**Khi nhiều luồng cùng gặp sự cố trong 1 khung `alertBatching.windowMs` (mặc định 10 giây), vượt `alertBatching.minCountToDigest` (mặc định 3) — gộp thành 1 tin duy nhất:**
 ```
 🔴 CẢNH BÁO DIỆN RỘNG (Gộp)
 Đang có 7 luồng gặp sự cố cùng lúc.

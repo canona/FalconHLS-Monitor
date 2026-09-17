@@ -34,7 +34,12 @@ const RetrySchema = RetryPolicySchema.extend({
 
 const AlertBatchingSchema = z
   .object({
-    windowMs: z.number().positive().default(60000),
+    // 10s (không phải 60s như bản đầu) - nếu tại thời điểm hết hạn window chỉ có 1 sự cố duy nhất
+    // trong buffer, flush() vẫn gửi ngay dưới dạng tin đơn lẻ (xem alertManager.ts::flush), nên
+    // windowMs ngắn giúp giảm độ trễ cảm nhận được cho trường hợp phổ biến (1 kênh lỗi đơn lẻ) mà
+    // vẫn đủ thời gian bắt sự cố diện rộng (nhiều kênh chung origin thường xác nhận lệch nhau vài
+    // giây do scheduler dàn đều lịch check, không phải cùng 1 khoảnh khắc).
+    windowMs: z.number().positive().default(10000),
     minCountToDigest: z.number().int().positive().default(3),
   })
   .default({});

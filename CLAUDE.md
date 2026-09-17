@@ -49,7 +49,7 @@ src/
 │                            #   "đo bitrate/lỗi giải mã" vào 1 tiến trình/track - xem "Bẫy kỹ thuật" #13.
 ├── telegram/
 │   ├── telegramBot.ts       # Build message MarkdownV2 (buildIncidentMessage, buildDigestMessage) + gửi qua Bot API
-│   └── alertManager.ts      # Gom sự cố ĐÃ XÁC NHẬN trong alertBatching.windowMs, gộp thành 1 tin
+│   └── alertManager.ts      # Gom sự cố ĐÃ XÁC NHẬN trong alertBatching.windowMs (mặc định 10s), gộp thành 1 tin
 │                            #   digest nếu > alertBatching.minCountToDigest, else gửi riêng lẻ.
 ├── web/server.ts            # Express: phục vụ public/index.html (dashboard) + GET /api/status (JSON)
 │                            #   + GET /api/events (SSE, đẩy lại mỗi 3s) + GET /health (giữ cho Docker
@@ -114,6 +114,8 @@ npm start            # node dist/index.js (sau build)
 13. **Mỗi lần Level 3 check 1 kênh TV có audio rendition riêng (EXT-X-MEDIA) từng mở tới 4 tiến trình ffprobe/ffmpeg = 4 kết nối TCP riêng tới CÙNG origin** (2 `probeMetadata` + 2 `measureTrack`) — với nhiều kênh chung 1 origin, tổng kết nối đồng thời có thể lên hàng chục, dễ khiến origin/WAF rate-limit. Đã gộp: xóa hẳn `probeMetadata()`, để `measureTrack()` tự đọc codec/tình trạng track từ banner ffmpeg (`Stream #0:x: Video: ...` / `Audio: ...`) ngay trong tiến trình đo bitrate — giảm còn tối đa 2 tiến trình/kênh (video + audio). Kèm theo `hostQueue` (giới hạn `maxConcurrentPerHost`, mặc định 2) lồng bên ngoài `ffprobeQueue` (giới hạn `maxConcurrentChecks` tổng) trong `ffprobe.ts::analyzeStream()` để chặn đúng nguyên nhân gốc (quá nhiều kết nối dồn dập tới CÙNG 1 hostname), không chỉ giảm nhãn hiển thị.
 
 14. **Retry/backoff KHÔNG còn dùng chung 1 chính sách cho mọi category** — `config.retry.network` (mặc định `maxRetries: 5`, `retryDelaysMs: [15000, 30000, 30000, 30000]`) áp dụng riêng cho category `NETWORK`, kiên nhẫn hơn hẳn `config.retry` gốc (mặc định `maxRetries: 3`, `[5000, 10000]`) dùng cho `STREAM` — vì lỗi kết nối origin cần thời gian dài hơn để origin/WAF "hạ nhiệt" trước khi hệ thống kết luận luồng đã chết. Nếu sửa `incidentManager.ts::processCheckResult`, luôn lấy policy qua `getRetryPolicy(category, config.retry)`, không đọc thẳng `config.retry.maxRetries`/`retryDelaysMs`.
+
+15. **`alertBatching.windowMs` mặc định là 10s, KHÔNG phải 60s như bản gốc** — mặc định cũ (60s) khiến 1 kênh lỗi ĐƠN LẺ (trường hợp phổ biến nhất) luôn phải đợi đủ 60s trong buffer trước khi `flush()` quyết định gửi tin đơn lẻ, cộng thêm thời gian xác nhận qua retry (~15-30s) → độ trễ cảm nhận được giữa lúc dashboard báo lỗi và lúc Telegram thực sự nhận tin lên tới 1-2 phút (phát hiện qua phản hồi thực tế của người dùng). `flush()` đã sẵn logic gửi ngay dạng tin đơn lẻ khi buffer chỉ có 1 sự cố lúc hết hạn window — hạ `windowMs` xuống 10s giữ nguyên khả năng gộp digest khi có sự cố diện rộng (các kênh chung origin thường xác nhận lệch nhau vài giây do scheduler dàn đều lịch, không phải cùng lúc), nhưng giảm mạnh độ trễ cho trường hợp phổ biến. Nếu cần đổi lại, sửa qua `alertBatching.windowMs` trong config, KHÔNG sửa cứng trong code.
 
 ## Loại luồng: `type: "tv" | "radio"`
 

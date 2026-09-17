@@ -33,7 +33,7 @@
     }
   },
   "alertBatching": {
-    "windowMs": 60000,
+    "windowMs": 10000,
     "minCountToDigest": 3
   },
   "diagnostics": {
