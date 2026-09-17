@@ -31,7 +31,8 @@
 
 <div style="padding-top: env(safe-area-inset-top,0px)"></div>
 
-<header class="sticky top-0 z-20 border-b border-slate-800 bg-[#0b0f14]/90 backdrop-blur">
+<!-- Thanh thương hiệu: KHÔNG sticky, cuộn đi khi kéo xuống để dành không gian màn hình nhỏ. -->
+<div class="border-b border-slate-800 bg-[#0b0f14]">
   <div class="max-w-[1600px] mx-auto px-4 sm:px-6 py-3 flex flex-wrap items-center gap-x-6 gap-y-2">
     <div class="flex items-center gap-2 shrink-0">
       <span class="text-2xl">🦅</span>
@@ -48,57 +49,60 @@
 
     <div id="summary" class="flex items-center gap-3 text-xs sm:text-sm"></div>
 
-    <div id="resources" class="hidden md:flex items-center gap-4 text-[11px] text-slate-500 mono"></div>
-
-    <div class="flex items-center gap-2 ml-auto">
-      <div id="view-toggle" class="inline-flex items-center rounded-lg border border-slate-700 bg-slate-900 p-0.5 text-xs">
-        <button data-view="grid" class="view-btn px-2.5 py-1 rounded-md transition-colors">🔲 Lưới</button>
-        <button data-view="list" class="view-btn px-2.5 py-1 rounded-md transition-colors">📋 Danh sách</button>
-      </div>
-    </div>
+    <div id="resources" class="hidden md:flex items-center gap-4 text-[11px] text-slate-500 mono ml-auto"></div>
   </div>
+</div>
 
-  <div class="max-w-[1600px] mx-auto px-4 sm:px-6 pb-3 flex flex-wrap items-center gap-2">
+<!-- Khối ghim (sticky): thanh công cụ (search/filter/view-toggle) + Alert Zone đi CÙNG NHAU để
+     không cần tính toán offset top thủ công cho từng phần tử con - luôn nằm ngay dưới nhau. -->
+<div id="sticky-stack" class="sticky top-0 z-50 border-b border-slate-800 bg-[#0b0f14]/95 backdrop-blur">
+  <div class="max-w-[1600px] mx-auto px-4 sm:px-6 py-2.5 flex flex-wrap items-center gap-2">
     <input
       id="search"
       type="text"
-      placeholder="Tìm kênh..."
-      class="flex-1 min-w-[160px] sm:flex-none sm:w-56 bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-sm placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-sky-600"
+      placeholder="🔍 Tìm kênh..."
+      class="flex-1 min-w-[140px] sm:flex-none sm:w-60 h-11 bg-slate-900 border border-slate-700 rounded-lg px-3 text-sm placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-sky-600"
     />
-    <div id="status-filter" class="inline-flex items-center gap-1.5 text-xs">
-      <button data-filter="all" class="filter-pill px-2.5 py-1 rounded-full border transition-colors">Tất cả</button>
-      <button data-filter="issues" class="filter-pill px-2.5 py-1 rounded-full border transition-colors">Đang lỗi</button>
-      <button data-filter="healthy" class="filter-pill px-2.5 py-1 rounded-full border transition-colors">Hoạt động tốt</button>
+    <div id="status-filter" class="flex items-center gap-1.5 text-xs">
+      <button data-filter="all" class="filter-pill h-11 px-3 rounded-full border transition-colors">Tất cả</button>
+      <button data-filter="issues" class="filter-pill h-11 px-3 rounded-full border transition-colors">Đang lỗi</button>
+      <button data-filter="healthy" class="filter-pill h-11 px-3 rounded-full border transition-colors">Hoạt động tốt</button>
+    </div>
+    <div id="view-toggle" class="inline-flex items-center rounded-lg border border-slate-700 bg-slate-900 p-0.5 text-xs ml-auto">
+      <button data-view="grid" class="view-btn h-10 px-3 rounded-md transition-colors">🔲 Lưới</button>
+      <button data-view="list" class="view-btn h-10 px-3 rounded-md transition-colors">📋 Danh sách</button>
     </div>
   </div>
-</header>
+
+  <section id="alert-zone" hidden class="max-w-[1600px] mx-auto px-4 sm:px-6 pb-3">
+    <div class="rounded-xl border border-red-700/60 bg-red-950/20 p-3 sm:p-4">
+      <h2 class="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-red-400 mb-2">
+        🚨 Kênh cần chú ý <span id="alert-count" class="text-red-500/70 font-normal normal-case">(0)</span>
+      </h2>
+      <div id="alert-list" class="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 max-h-[34vh] overflow-y-auto pr-0.5"></div>
+    </div>
+  </section>
+</div>
 
 <main class="max-w-[1600px] mx-auto px-4 sm:px-6 py-6 space-y-8">
 
-  <section id="alert-zone" hidden class="rounded-xl border border-red-700/60 bg-red-950/20 p-4">
-    <h2 class="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-red-400 mb-3">
-      🚨 Kênh cần chú ý <span id="alert-count" class="text-red-500/70 font-normal normal-case">(0)</span>
-    </h2>
-    <div id="alert-list" class="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"></div>
-  </section>
-
   <div id="view-grid" class="space-y-8">
     <section data-group="tv">
-      <h2 data-role="group-header" class="group-header flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-slate-400 mb-3 cursor-pointer select-none">
+      <h2 data-role="group-header" class="group-header flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-slate-400 mb-2 -mx-3 px-3 py-3 rounded-lg cursor-pointer select-none active:bg-slate-800/50">
         <span class="chevron">▾</span> 📺 Truyền hình (TV) <span data-role="group-count" class="text-slate-600 font-normal normal-case">(0)</span>
       </h2>
       <div data-role="group-body">
-        <div data-role="container" class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"></div>
+        <div data-role="container" class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"></div>
         <p data-role="empty" hidden class="text-sm text-slate-600 italic">Không có kênh TV nào.</p>
       </div>
     </section>
 
     <section data-group="radio">
-      <h2 data-role="group-header" class="group-header flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-slate-400 mb-3 cursor-pointer select-none">
+      <h2 data-role="group-header" class="group-header flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-slate-400 mb-2 -mx-3 px-3 py-3 rounded-lg cursor-pointer select-none active:bg-slate-800/50">
         <span class="chevron">▾</span> 📻 Phát thanh (Radio) <span data-role="group-count" class="text-slate-600 font-normal normal-case">(0)</span>
       </h2>
       <div data-role="group-body">
-        <div data-role="container" class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"></div>
+        <div data-role="container" class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"></div>
         <p data-role="empty" hidden class="text-sm text-slate-600 italic">Không có kênh Radio nào.</p>
       </div>
     </section>
@@ -106,17 +110,17 @@
 
   <div id="view-list" class="space-y-8" hidden>
     <section data-group="tv">
-      <h2 data-role="group-header" class="group-header flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-slate-400 mb-3 cursor-pointer select-none">
+      <h2 data-role="group-header" class="group-header flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-slate-400 mb-2 -mx-3 px-3 py-3 rounded-lg cursor-pointer select-none active:bg-slate-800/50">
         <span class="chevron">▾</span> 📺 Truyền hình (TV) <span data-role="group-count" class="text-slate-600 font-normal normal-case">(0)</span>
       </h2>
       <div data-role="group-body" class="rounded-xl border border-slate-800 bg-slate-900/40 overflow-x-auto">
-        <div class="min-w-[760px]">
-          <div class="grid grid-cols-[minmax(140px,1.3fr)_minmax(160px,2fr)_90px_90px_90px_130px] gap-3 items-center px-3 py-2 text-[11px] uppercase tracking-wide text-slate-500 border-b border-slate-800 bg-slate-900/60">
+        <div class="min-w-[420px]">
+          <div class="list-row-grid gap-3 items-center px-3 py-2.5 text-[11px] uppercase tracking-wide text-slate-500 border-b border-slate-800 bg-slate-900/60">
             <div>Tên kênh</div>
-            <div>Link HLS</div>
+            <div class="hidden md:block">Link HLS</div>
             <div>Video</div>
             <div>Audio</div>
-            <div>Cập nhật</div>
+            <div class="hidden md:block">Cập nhật</div>
             <div>Trạng thái</div>
           </div>
           <div data-role="container"></div>
@@ -126,17 +130,17 @@
     </section>
 
     <section data-group="radio">
-      <h2 data-role="group-header" class="group-header flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-slate-400 mb-3 cursor-pointer select-none">
+      <h2 data-role="group-header" class="group-header flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-slate-400 mb-2 -mx-3 px-3 py-3 rounded-lg cursor-pointer select-none active:bg-slate-800/50">
         <span class="chevron">▾</span> 📻 Phát thanh (Radio) <span data-role="group-count" class="text-slate-600 font-normal normal-case">(0)</span>
       </h2>
       <div data-role="group-body" class="rounded-xl border border-slate-800 bg-slate-900/40 overflow-x-auto">
-        <div class="min-w-[760px]">
-          <div class="grid grid-cols-[minmax(140px,1.3fr)_minmax(160px,2fr)_90px_90px_90px_130px] gap-3 items-center px-3 py-2 text-[11px] uppercase tracking-wide text-slate-500 border-b border-slate-800 bg-slate-900/60">
+        <div class="min-w-[420px]">
+          <div class="list-row-grid gap-3 items-center px-3 py-2.5 text-[11px] uppercase tracking-wide text-slate-500 border-b border-slate-800 bg-slate-900/60">
             <div>Tên kênh</div>
-            <div>Link HLS</div>
+            <div class="hidden md:block">Link HLS</div>
             <div>Video</div>
             <div>Audio</div>
-            <div>Cập nhật</div>
+            <div class="hidden md:block">Cập nhật</div>
             <div>Trạng thái</div>
           </div>
           <div data-role="container"></div>
@@ -162,6 +166,12 @@
     SUSPECT:  { label: "ĐANG XÁC MINH", dot: "bg-amber-400 pulse", badge: "bg-amber-500/15 text-amber-400 border-amber-500/40", border: "border-amber-600/50", ring: "" },
     DEGRADED: { label: "LỖI", dot: "bg-red-500 pulse", badge: "bg-red-600/20 text-red-400 border-red-600/50", border: "border-red-700/70", ring: "glow-degraded" },
   };
+
+  // Bảng List View dùng 6 cột trên md+ (đủ chỗ), nhưng chỉ 4 cột trên mobile (Link HLS và Cập nhật
+  // bị ẩn qua class "hidden md:block" ở cả header lẫn từng dòng dữ liệu) - vì các ô ẩn không còn
+  // chiếm chỗ trong CSS grid nên 4 cột còn lại (Tên/Video/Audio/Trạng thái) tự động lấp đủ layout.
+  const LIST_ROW_CLASS = "grid grid-cols-[1.1fr_64px_64px_100px] md:grid-cols-[minmax(140px,1.3fr)_minmax(160px,2fr)_90px_90px_90px_130px]";
+  document.querySelectorAll(".list-row-grid").forEach((el) => el.classList.add(...LIST_ROW_CLASS.split(" ")));
 
   const LS_VIEW_KEY = "falconhls:viewMode";
 
@@ -215,7 +225,8 @@
   const collapsedGroups = {}; // key: "<tv|radio>:<grid|list>" -> boolean, khởi tạo lười (mặc định mở)
 
   // Cache element theo tên kênh, dùng để so sánh "chữ ký" dữ liệu và CHỈ cập nhật DOM của những
-  // kênh thực sự thay đổi - tránh vẽ lại toàn bộ 50-60 dòng mỗi 3 giây khi SSE bắn dữ liệu mới.
+  // kênh thực sự thay đổi - tránh vẽ lại toàn bộ 50-60 dòng mỗi 3 giây khi SSE bắn dữ liệu mới
+  // (yếu tố sống còn để mượt trên điện thoại, không chỉ trên desktop).
   const caches = {
     grid: { tv: new Map(), radio: new Map() },
     list: { tv: new Map(), radio: new Map() },
@@ -295,13 +306,13 @@
   function applyRow(el, s) {
     const style = STATUS_STYLE[s.status] || STATUS_STYLE.SUSPECT;
     const highlight = s.status === "DEGRADED" ? "bg-red-950/20" : s.status === "SUSPECT" ? "bg-amber-950/10" : "";
-    el.className = `grid grid-cols-[minmax(140px,1.3fr)_minmax(160px,2fr)_90px_90px_90px_130px] gap-3 items-center px-3 py-2 border-b border-slate-800/70 text-xs hover:bg-slate-800/30 transition-colors ${highlight}`;
+    el.className = `${LIST_ROW_CLASS} gap-3 items-center px-3 py-2.5 border-b border-slate-800/70 text-xs hover:bg-slate-800/30 transition-colors ${highlight}`;
     el.innerHTML = `
       <div class="font-semibold text-slate-100 truncate" title="${escapeHtml(s.name)}">${escapeHtml(s.name)}</div>
-      <a href="${escapeHtml(s.url)}" target="_blank" rel="noopener" class="text-slate-500 mono truncate hover:text-sky-400" title="${escapeHtml(s.url)}">${escapeHtml(s.url)}</a>
-      <div class="mono text-slate-300">${s.type === "radio" ? "—" : fmtBitrate(s.videoBitrateKbps)}</div>
-      <div class="mono text-slate-300">${fmtBitrate(s.audioBitrateKbps)}</div>
-      <div class="mono text-slate-600" data-role="time">${timeAgo(s.checkedAt)}</div>
+      <a href="${escapeHtml(s.url)}" target="_blank" rel="noopener" class="hidden md:block text-slate-500 mono truncate hover:text-sky-400" title="${escapeHtml(s.url)}">${escapeHtml(s.url)}</a>
+      <div class="mono text-slate-300 truncate">${s.type === "radio" ? "—" : fmtBitrate(s.videoBitrateKbps)}</div>
+      <div class="mono text-slate-300 truncate">${fmtBitrate(s.audioBitrateKbps)}</div>
+      <div class="hidden md:block mono text-slate-600" data-role="time">${timeAgo(s.checkedAt)}</div>
       <span class="inline-flex items-center gap-1.5 text-[10px] font-semibold tracking-wide px-2 py-1 rounded-full border w-fit ${style.badge}">
         <span class="w-1.5 h-1.5 rounded-full ${style.dot}"></span>${style.label}
       </span>`;
@@ -461,7 +472,7 @@
   function updatePillStyles() {
     statusFilterEl.querySelectorAll(".filter-pill").forEach((btn) => {
       const active = btn.getAttribute("data-filter") === statusFilter;
-      btn.className = "filter-pill px-2.5 py-1 rounded-full border transition-colors " +
+      btn.className = "filter-pill h-11 px-3 rounded-full border transition-colors " +
         (active ? "bg-sky-500/20 text-sky-300 border-sky-500/50" : "bg-slate-900 text-slate-400 border-slate-700 hover:border-slate-600");
     });
   }
@@ -473,7 +484,7 @@
     viewListEl.hidden = view !== "list";
     viewToggleEl.querySelectorAll(".view-btn").forEach((btn) => {
       const active = btn.getAttribute("data-view") === view;
-      btn.className = "view-btn px-2.5 py-1 rounded-md transition-colors " +
+      btn.className = "view-btn h-10 px-3 rounded-md transition-colors " +
         (active ? "bg-sky-500/20 text-sky-300" : "text-slate-400 hover:text-slate-200");
     });
     if (latestPayload) renderActiveView(latestPayload);
