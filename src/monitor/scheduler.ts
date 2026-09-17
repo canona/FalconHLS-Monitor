@@ -45,18 +45,30 @@ export function startScheduler(config: AppConfig): { stop: () => void } {
       });
   };
 
-  for (const stream of config.streams) {
-    runCheck(stream);
+  // Dàn đều thời điểm bắt đầu của từng luồng trên CẢ chu kỳ checkIntervalSeconds, thay vì để TẤT
+  // CẢ luồng bắn check đầu tiên (và mọi chu kỳ interval sau đó, vì cùng chung pha) trong cùng 1
+  // khoảnh khắc. Nếu không dàn đều, N luồng cùng chung 1 origin sẽ tạo ra 1 đợt dồn kết nối TCP
+  // lặp lại đúng mỗi checkIntervalSeconds (thundering herd định kỳ) ngay cả khi đã có hàng đợi giới
+  // hạn concurrency theo host/tổng - hàng đợi chỉ giới hạn số CHẠY ĐỒNG THỜI, không giới hạn việc
+  // TẤT CẢ cùng ập vào hàng đợi đó trong cùng 1 thời điểm mỗi chu kỳ. Đã tái hiện thực tế: 25 kênh
+  // chung 1 origin vẫn bị timeout kết nối hàng loạt ngay sau mỗi lần deploy/restart dù đã throttle.
+  config.streams.forEach((stream, index) => {
+    const staggerMs = Math.floor((index * config.checkIntervalSeconds * 1000) / config.streams.length);
 
-    const timer = setInterval(() => {
-      if (getState(stream.name).phase === "SUSPECT") {
-        logDiagnostic("skip_suspect_interval", { stream: stream.name });
-        return;
-      }
+    const startTimer = setTimeout(() => {
       runCheck(stream);
-    }, config.checkIntervalSeconds * 1000);
-    timers.push(timer);
-  }
+
+      const timer = setInterval(() => {
+        if (getState(stream.name).phase === "SUSPECT") {
+          logDiagnostic("skip_suspect_interval", { stream: stream.name });
+          return;
+        }
+        runCheck(stream);
+      }, config.checkIntervalSeconds * 1000);
+      timers.push(timer);
+    }, staggerMs);
+    timers.push(startTimer);
+  });
 
   log.info(
     `Scheduler khởi động: ${config.streams.length} luồng, interval ${config.checkIntervalSeconds}s, ` +
