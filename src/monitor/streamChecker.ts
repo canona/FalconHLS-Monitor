@@ -39,6 +39,24 @@ export async function checkStream(stream: StreamConfig, config: AppConfig): Prom
     );
   }
 
+  // Level 1/2 đã đủ để kết luận DEGRADED (đóng băng, hoặc độ trễ manifest vượt ngưỡng) -> bỏ qua
+  // Level 3. Hai lý do: (1) không lãng phí 1 slot hostQueue/ffprobeQueue (tài nguyên bị origin giới
+  // hạn nghiêm ngặt) để đo bitrate của 1 luồng đã biết chắc là lỗi; (2) quan trọng hơn - nếu vẫn chờ
+  // Level 3, MỌI lần retry trong chu trình SUSPECT (incidentManager gọi lại checkStream) cũng phải
+  // xếp hàng chờ ffprobe, khiến watchdog kích hoạt sớm (runFastProbe) mất hết ý nghĩa: đã tái hiện
+  // thực tế người dùng vẫn phải đợi gần bằng thời gian cũ dù watchdog đã phát hiện đúng và nhanh,
+  // vì bản thân runCheck() bị nghẽn lại ở bước Level 3 phía sau.
+  if (issues.length > 0) {
+    return {
+      streamName: stream.name,
+      checkedAt: new Date(),
+      status: "DEGRADED",
+      issues,
+      manifest,
+      freeze,
+    };
+  }
+
   const isRadio = stream.type === "radio";
 
   const av = await analyzeStream({
