@@ -5,6 +5,16 @@ export interface StreamConfig {
   url: string;
   /** "tv" (mặc định, yêu cầu cả Video+Audio) hoặc "radio" (chỉ yêu cầu Audio, bỏ qua kiểm tra Video). */
   type: StreamType;
+  /** Tên đối tác cung cấp luồng ("static" cho luồng khai báo tay trong config.json). */
+  partner: string;
+  /** Khóa định danh nội bộ DUY NHẤT = `${partner}:${name}` - KHÔNG dùng `name` làm khóa vì 2 đối
+   *  tác khác nhau có thể đặt tên kênh trùng nhau (VD cả 2 đều có "VTV1"). */
+  id: string;
+}
+
+export interface PartnerCredential {
+  name: string;
+  token: string;
 }
 
 export interface Thresholds {
@@ -43,8 +53,15 @@ export interface DiagnosticsConfig {
   ffprobeSlowThresholdMs: number;
 }
 
+/** Luồng khai báo thủ công trong config.json (không qua Partner API) - dùng cho test/luồng nội bộ. */
+export interface StaticStreamConfig {
+  name: string;
+  url: string;
+  type: StreamType;
+}
+
 export interface AppConfig {
-  streams: StreamConfig[];
+  staticStreams: StaticStreamConfig[];
   checkIntervalSeconds: number;
   /** Lịch riêng, nhanh hơn, chỉ cho Level 1+2 (manifest + đóng băng) - xem scheduler.ts::runFastProbe. */
   fastCheckIntervalSeconds: number;
@@ -132,6 +149,7 @@ export interface AvAnalysisResult {
 /** Dữ liệu tối giản của 1 sự cố đã được XÁC NHẬN (qua retry) - dùng để build message Telegram (đơn lẻ hoặc digest). */
 export interface AlertIncident {
   streamName: string;
+  partner: string;
   status: HealthStatus;
   category: ErrorCategory;
   issues: string[];
@@ -141,7 +159,10 @@ export interface AlertIncident {
 }
 
 export interface StreamCheckResult {
+  /** Khóa định danh nội bộ (= stream.id) - dùng để join với state/dashboard, KHÔNG dùng để hiển thị. */
+  id: string;
   streamName: string;
+  partner: string;
   checkedAt: Date;
   status: HealthStatus;
   issues: string[];

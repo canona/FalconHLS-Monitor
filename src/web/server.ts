@@ -1,8 +1,9 @@
 import path from "path";
 import crypto from "crypto";
 import express, { type Express, type Request, type Response, type NextFunction } from "express";
-import type { AppConfig, HealthStatus, StreamPhase } from "../types";
+import type { HealthStatus, StreamPhase } from "../types";
 import { getAllStates, getAllLastResults } from "../monitor/stateStore";
+import { getStreams } from "../monitor/streamRegistry";
 import { getEventLoopLagMs, getMemoryPressure } from "../monitor/eventLoopMonitor";
 import { getFfprobeQueueStats } from "../ffmpeg/ffprobe";
 import { createChildLogger } from "../logger/logger";
@@ -18,7 +19,9 @@ function toDashboardStatus(lastStatus: HealthStatus, phase: StreamPhase): Dashbo
 }
 
 export interface DashboardStream {
+  id: string;
   name: string;
+  partner: string;
   url: string;
   type: "tv" | "radio";
   status: DashboardStatus;
@@ -41,20 +44,20 @@ export interface DashboardPayload {
 }
 
 /** Gộp state (stateStore) + kết quả check gần nhất + metadata config (url/type) thành 1 payload cho dashboard/API. */
-export function buildStatusPayload(config: AppConfig): DashboardPayload {
+export function buildStatusPayload(): DashboardPayload {
   const states = getAllStates();
-  const lastResults = new Map(getAllLastResults().map((r) => [r.streamName, r]));
-  const streamMeta = new Map(config.streams.map((s) => [s.name, s]));
+  const lastResults = new Map(getAllLastResults().map((r) => [r.id, r]));
 
-  const streams: DashboardStream[] = config.streams.map((streamConfig) => {
-    const state = states.get(streamConfig.name);
-    const result = lastResults.get(streamConfig.name);
-    const meta = streamMeta.get(streamConfig.name)!;
+  const streams: DashboardStream[] = getStreams().map((streamConfig) => {
+    const state = states.get(streamConfig.id);
+    const result = lastResults.get(streamConfig.id);
 
     return {
+      id: streamConfig.id,
       name: streamConfig.name,
-      url: meta.url,
-      type: meta.type,
+      partner: streamConfig.partner,
+      url: streamConfig.url,
+      type: streamConfig.type,
       status: state ? toDashboardStatus(state.lastStatus, state.phase) : "SUSPECT",
       rawStatus: state?.lastStatus ?? "OK",
       lastError: result?.issues[0] ?? null,
@@ -119,21 +122,21 @@ function basicAuthMiddleware(req: Request, res: Response, next: NextFunction): v
   res.status(401).send("Yêu cầu xác thực để truy cập Dashboard.");
 }
 
-function createApp(config: AppConfig): Express {
+function createApp(): Express {
   const app = express();
   const publicDir = path.join(__dirname, "..", "..", "public");
 
   // /health đăng ký TRƯỚC middleware auth - Docker HEALTHCHECK (wget nội bộ trong container,
   // không có credential) phải luôn truy cập được bất kể DASHBOARD_USER/PASSWORD có cấu hình hay không.
   app.get("/health", (_req: Request, res: Response) => {
-    res.json({ status: "ok", ...buildStatusPayload(config) });
+    res.json({ status: "ok", ...buildStatusPayload() });
   });
 
   app.use(basicAuthMiddleware);
   app.use(express.static(publicDir));
 
   app.get("/api/status", (_req: Request, res: Response) => {
-    res.json(buildStatusPayload(config));
+    res.json(buildStatusPayload());
   });
 
   app.get("/api/events", (req: Request, res: Response) => {
@@ -145,7 +148,7 @@ function createApp(config: AppConfig): Express {
     });
 
     const push = () => {
-      res.write(`data: ${JSON.stringify(buildStatusPayload(config))}\n\n`);
+      res.write(`data: ${JSON.stringify(buildStatusPayload())}\n\n`);
     };
 
     push();
@@ -159,7 +162,7 @@ function createApp(config: AppConfig): Express {
   return app;
 }
 
-export function startWebServer(port: number, config: AppConfig) {
+export function startWebServer(port: number) {
   const user = process.env.DASHBOARD_USER;
   const pass = process.env.DASHBOARD_PASSWORD;
 
@@ -173,7 +176,7 @@ export function startWebServer(port: number, config: AppConfig) {
     log.warn("Dashboard/API đang chạy KHÔNG có Basic Auth (không khai báo DASHBOARD_USER/DASHBOARD_PASSWORD)");
   }
 
-  const app = createApp(config);
+  const app = createApp();
   const server = app.listen(port, () => {
     log.info(`Web Dashboard + API đang chạy tại cổng ${port}`);
   });

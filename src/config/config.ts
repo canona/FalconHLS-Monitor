@@ -53,7 +53,9 @@ const DiagnosticsSchema = z
   .default({});
 
 const ConfigSchema = z.object({
-  streams: z.array(StreamSchema).min(1, "Cần khai báo ít nhất 1 luồng trong config"),
+  // Luồng khai báo thủ công (không qua Partner API) - dùng cho test/luồng nội bộ. Danh sách luồng
+  // chính giờ đến từ Partner API (xem src/partners/streamSyncService.ts), nên field này optional.
+  staticStreams: z.array(StreamSchema).default([]),
   checkIntervalSeconds: z.number().positive(),
   // Lịch kiểm tra RIÊNG, nhanh hơn nhiều, chỉ cho Level 1 (manifest) + Level 2 (đóng băng) - hai
   // bước này chỉ là HTTP GET nhẹ, không đụng tới hostQueue/ffprobeQueue bị giới hạn bởi origin, nên

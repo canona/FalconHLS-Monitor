@@ -1,5 +1,5 @@
 {
-  "streams": [
+  "staticStreams": [
     {
       "name": "Demo-TV-Channel",
       "url": "https://example.com/live/tv-channel/index.m3u8",

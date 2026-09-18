@@ -4,7 +4,7 @@ import { checkStream } from "./streamChecker";
 import { checkManifest } from "./manifestChecker";
 import { checkFreeze } from "./freezeChecker";
 import { processCheckResult } from "./incidentManager";
-import { getState, setState, clearAllPendingRetries } from "./stateStore";
+import { getState, setState, removeState, clearAllPendingRetries } from "./stateStore";
 import { logDiagnostic } from "../logger/diagnosticLogger";
 import { createChildLogger } from "../logger/logger";
 
@@ -25,18 +25,27 @@ const log = createChildLogger("scheduler");
  * `fastCheckIntervalSeconds` - CHỈ Level 1+2, dùng làm "watchdog" phát hiện sớm manifest lỗi/đóng
  * băng mà không phải đợi tới lượt Level 3 (có thể tới vài phút khi giám sát nhiều kênh chung 1
  * origin bị giới hạn `maxConcurrentPerHost`). Xem chi tiết ở `runFastProbe` bên dưới.
+ *
+ * Danh sách luồng KHÔNG còn cố định lúc khởi động - luồng đến từ staticStreams (config.json) +
+ * Partner API, có thể thêm/bớt bất kỳ lúc nào qua `addStreams`/`removeStream` (xem streamSyncService.ts).
+ * Mọi khóa nội bộ (state, watchdog streak) dùng `stream.id` (= `partner:name`), KHÔNG dùng `stream.name`,
+ * vì 2 Partner khác nhau có thể đặt tên kênh trùng nhau.
  */
-export function startScheduler(config: AppConfig): { stop: () => void } {
+export function startScheduler(config: AppConfig): {
+  addStreams: (streams: StreamConfig[]) => void;
+  removeStream: (id: string) => void;
+  stop: () => void;
+} {
   const manifestQueue = new PQueue({ concurrency: config.maxConcurrentManifestChecks });
-  const timers: NodeJS.Timeout[] = [];
+  const timersByStream = new Map<string, NodeJS.Timeout[]>();
 
   const runCheck = (stream: StreamConfig) => {
-    const state = getState(stream.name);
+    const state = getState(stream.id);
     if (state.isChecking) {
-      logDiagnostic("skip_overlap", { stream: stream.name });
+      logDiagnostic("skip_overlap", { stream: stream.name, streamId: stream.id });
       return;
     }
-    setState(stream.name, { ...state, isChecking: true });
+    setState(stream.id, { ...state, isChecking: true });
 
     manifestQueue
       .add(() => checkStream(stream, config))
@@ -48,7 +57,7 @@ export function startScheduler(config: AppConfig): { stop: () => void } {
         log.error(`Lỗi không mong muốn khi kiểm tra luồng ${stream.name}`, { error: (err as Error).message });
       })
       .finally(() => {
-        setState(stream.name, { ...getState(stream.name), isChecking: false });
+        setState(stream.id, { ...getState(stream.id), isChecking: false });
       });
   };
 
@@ -78,55 +87,58 @@ export function startScheduler(config: AppConfig): { stop: () => void } {
   const FAST_FREEZE_CONFIRM_READS = 2;
 
   const runFastProbe = async (stream: StreamConfig) => {
-    const state = getState(stream.name);
+    const state = getState(stream.id);
     if (state.isChecking || state.phase === "SUSPECT" || state.lastStatus !== "OK") {
-      fastFreezeStreak.delete(stream.name);
+      fastFreezeStreak.delete(stream.id);
       return;
     }
 
     const manifest = await manifestQueue.add(() => checkManifest(stream.url, config.timeoutSeconds));
-    if (!manifest || getState(stream.name).isChecking) return;
+    if (!manifest || getState(stream.id).isChecking) return;
 
     if (!manifest.ok || !manifest.manifest) {
-      fastFreezeStreak.delete(stream.name);
-      logDiagnostic("fast_probe_manifest_fail", { stream: stream.name, error: manifest.error });
+      fastFreezeStreak.delete(stream.id);
+      logDiagnostic("fast_probe_manifest_fail", { stream: stream.name, streamId: stream.id, error: manifest.error });
       runCheck(stream);
       return;
     }
 
-    const freeze = checkFreeze(manifest.manifest, getState(stream.name));
+    const freeze = checkFreeze(manifest.manifest, getState(stream.id));
     if (!freeze.frozen) {
-      fastFreezeStreak.delete(stream.name);
+      fastFreezeStreak.delete(stream.id);
       return;
     }
 
-    const streak = (fastFreezeStreak.get(stream.name) ?? 0) + 1;
-    logDiagnostic("fast_probe_freeze_detected", { stream: stream.name, mediaSequence: freeze.mediaSequence, streak });
+    const streak = (fastFreezeStreak.get(stream.id) ?? 0) + 1;
+    logDiagnostic("fast_probe_freeze_detected", {
+      stream: stream.name,
+      streamId: stream.id,
+      mediaSequence: freeze.mediaSequence,
+      streak,
+    });
 
     if (streak >= FAST_FREEZE_CONFIRM_READS) {
-      fastFreezeStreak.delete(stream.name);
+      fastFreezeStreak.delete(stream.id);
       runCheck(stream);
     } else {
-      fastFreezeStreak.set(stream.name, streak);
+      fastFreezeStreak.set(stream.id, streak);
     }
   };
 
-  // Dàn đều thời điểm bắt đầu của từng luồng trên CẢ chu kỳ checkIntervalSeconds, thay vì để TẤT
-  // CẢ luồng bắn check đầu tiên (và mọi chu kỳ interval sau đó, vì cùng chung pha) trong cùng 1
-  // khoảnh khắc. Nếu không dàn đều, N luồng cùng chung 1 origin sẽ tạo ra 1 đợt dồn kết nối TCP
-  // lặp lại đúng mỗi checkIntervalSeconds (thundering herd định kỳ) ngay cả khi đã có hàng đợi giới
-  // hạn concurrency theo host/tổng - hàng đợi chỉ giới hạn số CHẠY ĐỒNG THỜI, không giới hạn việc
-  // TẤT CẢ cùng ập vào hàng đợi đó trong cùng 1 thời điểm mỗi chu kỳ. Đã tái hiện thực tế: 25 kênh
-  // chung 1 origin vẫn bị timeout kết nối hàng loạt ngay sau mỗi lần deploy/restart dù đã throttle.
-  config.streams.forEach((stream, index) => {
-    const staggerMs = Math.floor((index * config.checkIntervalSeconds * 1000) / config.streams.length);
+  // Dàn đều thời điểm bắt đầu của từng luồng trong CHÍNH BATCH được thêm vào (không còn biết trước
+  // tổng số luồng cố định lúc khởi động, vì danh sách có thể lớn dần qua các lần sync Partner API).
+  // N luồng cùng chung 1 origin thêm vào CÙNG 1 lần gọi addStreams (VD lần sync đầu tiên có nhiều
+  // kênh mới) vẫn được dàn đều để tránh thundering herd; các lần thêm lẻ tẻ sau đó (1-2 kênh mới mỗi
+  // 5 phút) rủi ro dồn cục thấp hơn nhiều so với lúc khởi động hàng loạt.
+  function scheduleOne(stream: StreamConfig, staggerMs: number, fastStaggerMs: number): void {
+    const timers: NodeJS.Timeout[] = [];
 
     const startTimer = setTimeout(() => {
       runCheck(stream);
 
       const timer = setInterval(() => {
-        if (getState(stream.name).phase === "SUSPECT") {
-          logDiagnostic("skip_suspect_interval", { stream: stream.name });
+        if (getState(stream.id).phase === "SUSPECT") {
+          logDiagnostic("skip_suspect_interval", { stream: stream.name, streamId: stream.id });
           return;
         }
         runCheck(stream);
@@ -134,12 +146,6 @@ export function startScheduler(config: AppConfig): { stop: () => void } {
       timers.push(timer);
     }, staggerMs);
     timers.push(startTimer);
-  });
-
-  // Lịch riêng cho watchdog Level 1+2 - dàn đều tương tự lịch chậm ở trên, cùng lý do (tránh dồn
-  // cục request mỗi fastCheckIntervalSeconds).
-  config.streams.forEach((stream, index) => {
-    const fastStaggerMs = Math.floor((index * config.fastCheckIntervalSeconds * 1000) / config.streams.length);
 
     const fastStartTimer = setTimeout(() => {
       void runFastProbe(stream);
@@ -150,17 +156,41 @@ export function startScheduler(config: AppConfig): { stop: () => void } {
       timers.push(fastTimer);
     }, fastStaggerMs);
     timers.push(fastStartTimer);
-  });
 
-  log.info(
-    `Scheduler khởi động: ${config.streams.length} luồng, interval Level1-3 ${config.checkIntervalSeconds}s, ` +
-      `interval watchdog Level1+2 ${config.fastCheckIntervalSeconds}s, ` +
-      `manifest-concurrency ${config.maxConcurrentManifestChecks}, ffprobe-concurrency ${config.maxConcurrentChecks}`
-  );
+    timersByStream.set(stream.id, timers);
+  }
+
+  function addStreams(streams: StreamConfig[]): void {
+    const toAdd = streams.filter((s) => !timersByStream.has(s.id));
+    if (toAdd.length === 0) return;
+
+    toAdd.forEach((stream, index) => {
+      const staggerMs = Math.floor((index * config.checkIntervalSeconds * 1000) / toAdd.length);
+      const fastStaggerMs = Math.floor((index * config.fastCheckIntervalSeconds * 1000) / toAdd.length);
+      scheduleOne(stream, staggerMs, fastStaggerMs);
+    });
+
+    log.info(`Scheduler: thêm ${toAdd.length} luồng mới (tổng hiện tại: ${timersByStream.size})`);
+  }
+
+  function removeStream(id: string): void {
+    const timers = timersByStream.get(id);
+    if (!timers) return;
+
+    timers.forEach(clearInterval);
+    timersByStream.delete(id);
+    fastFreezeStreak.delete(id);
+    removeState(id);
+
+    log.info(`Scheduler: đã gỡ luồng ${id} (tổng hiện tại: ${timersByStream.size})`);
+  }
 
   return {
+    addStreams,
+    removeStream,
     stop: () => {
-      timers.forEach(clearInterval);
+      timersByStream.forEach((timers) => timers.forEach(clearInterval));
+      timersByStream.clear();
       clearAllPendingRetries();
       manifestQueue.clear();
     },

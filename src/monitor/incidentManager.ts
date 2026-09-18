@@ -38,9 +38,9 @@ export function processCheckResult(
   recheck: RecheckFn
 ): void {
   const now = result.checkedAt;
-  const state = getState(stream.name);
+  const state = getState(stream.id);
 
-  setLastResult(stream.name, result);
+  setLastResult(stream.id, result);
 
   const baseUpdate = {
     lastMediaSequence: result.freeze?.mediaSequence ?? state.lastMediaSequence,
@@ -50,18 +50,18 @@ export function processCheckResult(
   };
 
   if (result.status === "OK") {
-    overloadStreak.delete(stream.name);
+    overloadStreak.delete(stream.id);
 
     if (state.pendingRetryTimer) clearTimeout(state.pendingRetryTimer);
 
     const wasConfirmedBad = state.lastStatus !== "OK";
     if (wasConfirmedBad) {
       void sendTelegramMessage(buildRecoveryMessage(result));
-      logDiagnostic("stream_recovered", { stream: stream.name, previousStatus: state.lastStatus });
+      logDiagnostic("stream_recovered", { stream: stream.name, streamId: stream.id, previousStatus: state.lastStatus });
       log.info(`Luồng ${stream.name} đã phục hồi`);
     }
 
-    setState(stream.name, {
+    setState(stream.id, {
       ...state,
       ...baseUpdate,
       lastStatus: "OK",
@@ -81,6 +81,7 @@ export function processCheckResult(
 
   logDiagnostic("check_failed", {
     stream: stream.name,
+    streamId: stream.id,
     status: result.status,
     category,
     issues: result.issues,
@@ -93,23 +94,23 @@ export function processCheckResult(
   });
 
   if (category === "SYSTEM_OVERLOAD") {
-    const skips = (overloadStreak.get(stream.name) ?? 0) + 1;
-    overloadStreak.set(stream.name, skips);
+    const skips = (overloadStreak.get(stream.id) ?? 0) + 1;
+    overloadStreak.set(stream.id, skips);
 
     log.warn(
       `[QUÁ TẢI] Bỏ qua kết quả kiểm tra luồng ${stream.name} do nghi ngờ hệ thống giám sát quá tải (không gửi Telegram)`,
       { eventLoopLagMs: diag.eventLoopLagMs, heapUsedRatio: diag.heapUsedRatio, timedOut: result.av?.timedOut }
     );
 
-    setState(stream.name, { ...state, ...baseUpdate });
+    setState(stream.id, { ...state, ...baseUpdate });
 
     if (skips >= MAX_OVERLOAD_SKIPS) {
       // Quá tải dai dẳng - không thể có kết quả tin cậy, dừng hẳn chu trình retry cho lần này
       // để tránh vòng lặp vô hạn; luồng sẽ được kiểm tra lại ở chu kỳ interval bình thường tiếp theo.
-      overloadStreak.delete(stream.name);
+      overloadStreak.delete(stream.id);
       logDiagnostic("overload_giveup", { stream: stream.name, skips });
-      setState(stream.name, {
-        ...getState(stream.name),
+      setState(stream.id, {
+        ...getState(stream.id),
         phase: "STABLE",
         suspectAttempt: 0,
         pendingRetryTimer: null,
@@ -128,7 +129,7 @@ export function processCheckResult(
   const attempt = state.phase === "SUSPECT" ? state.suspectAttempt + 1 : 1;
 
   if (attempt < policy.maxRetries) {
-    setState(stream.name, {
+    setState(stream.id, {
       ...state,
       ...baseUpdate,
       phase: "SUSPECT",
@@ -153,7 +154,7 @@ export function processCheckResult(
   const cooldownMs = config.cooldownMinutes * 60_000;
   const cooldownElapsed = !state.lastAlertAt || now.getTime() - state.lastAlertAt.getTime() >= cooldownMs;
 
-  setState(stream.name, {
+  setState(stream.id, {
     ...state,
     ...baseUpdate,
     lastStatus: result.status,
@@ -181,6 +182,7 @@ export function processCheckResult(
     });
     enqueueAlert({
       streamName: stream.name,
+      partner: stream.partner,
       status: result.status,
       category,
       issues: result.issues,
@@ -195,11 +197,11 @@ export function processCheckResult(
 }
 
 function scheduleRetry(stream: StreamConfig, delayMs: number, recheck: RecheckFn): void {
-  const state = getState(stream.name);
+  const state = getState(stream.id);
   if (state.pendingRetryTimer) clearTimeout(state.pendingRetryTimer);
 
   const timer = setTimeout(() => recheck(stream), delayMs);
   timer.unref();
 
-  setState(stream.name, { ...getState(stream.name), pendingRetryTimer: timer });
+  setState(stream.id, { ...getState(stream.id), pendingRetryTimer: timer });
 }

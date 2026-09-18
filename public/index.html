@@ -68,6 +68,12 @@
       <button data-filter="issues" class="filter-pill h-11 px-3 rounded-full border transition-colors">Đang lỗi</button>
       <button data-filter="healthy" class="filter-pill h-11 px-3 rounded-full border transition-colors">Hoạt động tốt</button>
     </div>
+    <select
+      id="partner-filter"
+      class="h-11 px-2 rounded-lg border border-slate-700 bg-slate-900 text-xs text-slate-300 focus:outline-none focus:ring-1 focus:ring-sky-600"
+    >
+      <option value="all">Tất cả đối tác</option>
+    </select>
     <div id="view-toggle" class="inline-flex items-center rounded-lg border border-slate-700 bg-slate-900 p-0.5 text-xs ml-auto">
       <button data-view="grid" class="view-btn h-10 px-3 rounded-md transition-colors">🔲 Lưới</button>
       <button data-view="list" class="view-btn h-10 px-3 rounded-md transition-colors">📋 Danh sách</button>
@@ -190,6 +196,7 @@
   const connLabel = document.getElementById("conn-label");
   const searchInput = document.getElementById("search");
   const statusFilterEl = document.getElementById("status-filter");
+  const partnerFilterEl = document.getElementById("partner-filter");
   const viewToggleEl = document.getElementById("view-toggle");
   const viewGridEl = document.getElementById("view-grid");
   const viewListEl = document.getElementById("view-list");
@@ -221,6 +228,8 @@
   let latestPayload = null;
   let searchTerm = "";
   let statusFilter = "all"; // all | issues | healthy
+  let partnerFilter = "all"; // all | <ten partner>
+  let lastPartnerOptionsKey = "";
   let activeView = safeGetStorage(LS_VIEW_KEY) === "list" ? "list" : "grid";
   const collapsedGroups = {}; // key: "<tv|radio>:<grid|list>" -> boolean, khởi tạo lười (mặc định mở)
 
@@ -256,17 +265,45 @@
   }
 
   function signature(s) {
-    return [s.status, s.videoBitrateKbps, s.audioBitrateKbps, s.lastError, s.checkedAt, s.url, s.name].join("|");
+    return [s.status, s.videoBitrateKbps, s.audioBitrateKbps, s.lastError, s.checkedAt, s.url, s.name, s.partner].join("|");
   }
 
   function matchesFilters(s) {
     if (statusFilter === "issues" && s.status === "HEALTHY") return false;
     if (statusFilter === "healthy" && s.status !== "HEALTHY") return false;
+    if (partnerFilter !== "all" && s.partner !== partnerFilter) return false;
     if (searchTerm && !s.name.toLowerCase().includes(searchTerm)) return false;
     return true;
   }
 
+  // Danh sách đối tác đến từ dữ liệu SSE, có thể thay đổi theo thời gian (Partner API thêm/bớt) - chỉ
+  // build lại <option> khi tập hợp đối tác thực sự đổi, để không reset lựa chọn đang chọn mỗi 3s.
+  function updatePartnerOptions(streams) {
+    const partners = Array.from(new Set(streams.map((s) => s.partner).filter(Boolean))).sort();
+    const key = partners.join(",");
+    if (key === lastPartnerOptionsKey) return;
+    lastPartnerOptionsKey = key;
+
+    const previousValue = partnerFilterEl.value;
+    partnerFilterEl.innerHTML = '<option value="all">Tất cả đối tác</option>' +
+      partners.map((p) => `<option value="${escapeHtml(p)}">${escapeHtml(p.toUpperCase())}</option>`).join("");
+
+    if (partners.includes(previousValue)) {
+      partnerFilterEl.value = previousValue;
+    } else {
+      partnerFilter = "all";
+      partnerFilterEl.value = "all";
+    }
+  }
+
   // ---- render fragments cho từng loại phần tử ----
+  // Nhãn đối tác dùng màu xám mờ trung tính - KHÔNG dùng emerald/amber/red (đã dành riêng cho trạng
+  // thái) để không gây nhầm lẫn với 3 màu HEALTHY/SUSPECT/DEGRADED. Luồng khai báo tay ("static") ẩn nhãn.
+  function partnerBadge(s) {
+    if (!s.partner || s.partner === "static") return "";
+    return `<span class="shrink-0 text-[9px] font-semibold tracking-wide px-1.5 py-0.5 rounded bg-slate-700/40 text-slate-400 border border-slate-600/40">${escapeHtml(s.partner.toUpperCase())}</span>`;
+  }
+
   function cardInner(s) {
     const style = STATUS_STYLE[s.status] || STATUS_STYLE.SUSPECT;
     const errorLine = s.status !== "HEALTHY" && s.lastError
@@ -276,7 +313,10 @@
     return `
       <div class="flex items-start justify-between gap-2">
         <div class="min-w-0">
-          <div class="font-medium text-slate-100 truncate" title="${escapeHtml(s.name)}">${escapeHtml(s.name)}</div>
+          <div class="flex items-center gap-1.5 min-w-0">
+            ${partnerBadge(s)}
+            <div class="font-medium text-slate-100 truncate" title="${escapeHtml(s.name)}">${escapeHtml(s.name)}</div>
+          </div>
           <div class="text-[11px] text-slate-500 truncate mono" title="${escapeHtml(s.url)}">${escapeHtml(s.url)}</div>
         </div>
         <span class="shrink-0 inline-flex items-center gap-1.5 text-[10px] font-semibold tracking-wide px-2 py-1 rounded-full border ${style.badge}">
@@ -308,7 +348,10 @@
     const highlight = s.status === "DEGRADED" ? "bg-red-950/20" : s.status === "SUSPECT" ? "bg-amber-950/10" : "";
     el.className = `${LIST_ROW_CLASS} gap-3 items-center px-3 py-2.5 border-b border-slate-800/70 text-xs hover:bg-slate-800/30 transition-colors ${highlight}`;
     el.innerHTML = `
-      <div class="font-semibold text-slate-100 truncate" title="${escapeHtml(s.name)}">${escapeHtml(s.name)}</div>
+      <div class="flex items-center gap-1.5 min-w-0">
+        ${partnerBadge(s)}
+        <div class="font-semibold text-slate-100 truncate" title="${escapeHtml(s.name)}">${escapeHtml(s.name)}</div>
+      </div>
       <a href="${escapeHtml(s.url)}" target="_blank" rel="noopener" class="hidden md:block text-slate-500 mono truncate hover:text-sky-400" title="${escapeHtml(s.url)}">${escapeHtml(s.url)}</a>
       <div class="mono text-slate-300 truncate">${s.type === "radio" ? "—" : fmtBitrate(s.videoBitrateKbps)}</div>
       <div class="mono text-slate-300 truncate">${fmtBitrate(s.audioBitrateKbps)}</div>
@@ -324,7 +367,10 @@
     el.className = `rounded-lg border ${style.border} ${glow} bg-slate-950/60 p-3 flex flex-col gap-1.5`;
     el.innerHTML = `
       <div class="flex items-start justify-between gap-2">
-        <div class="font-medium text-slate-100 truncate text-sm" title="${escapeHtml(s.name)}">${escapeHtml(s.name)}</div>
+        <div class="flex items-center gap-1.5 min-w-0">
+          ${partnerBadge(s)}
+          <div class="font-medium text-slate-100 truncate text-sm" title="${escapeHtml(s.name)}">${escapeHtml(s.name)}</div>
+        </div>
         <span class="shrink-0 inline-flex items-center gap-1.5 text-[10px] font-semibold tracking-wide px-2 py-0.5 rounded-full border ${style.badge}">
           <span class="w-1.5 h-1.5 rounded-full ${style.dot}"></span>${style.label}
         </span>
@@ -343,7 +389,7 @@
     let prevEl = null;
 
     for (const item of items) {
-      const key = item.name;
+      const key = item.id;
       seen.add(key);
       const sig = signature(item);
       let entry = cache.get(key);
@@ -434,6 +480,7 @@
 
   function render(payload) {
     latestPayload = payload;
+    updatePartnerOptions(payload.streams);
     renderSummaryAndResources(payload);
     renderAlertZone(payload);
     renderActiveView(payload);
@@ -443,13 +490,13 @@
   // trên màn hình (view đang active + alert zone) - KHÔNG chạy lại applyFn/innerHTML của cả card/row.
   function tickTimeLabels() {
     if (!latestPayload) return;
-    const byName = new Map(latestPayload.streams.map((s) => [s.name, s.checkedAt]));
+    const checkedAtById = new Map(latestPayload.streams.map((s) => [s.id, s.checkedAt]));
     const activeCaches = [caches.alert, activeView === "grid" ? caches.grid.tv : caches.list.tv, activeView === "grid" ? caches.grid.radio : caches.list.radio];
 
     for (const cache of activeCaches) {
-      for (const [name, entry] of cache) {
+      for (const [id, entry] of cache) {
         const timeEl = entry.el.querySelector('[data-role="time"]');
-        if (timeEl) timeEl.textContent = timeAgo(byName.get(name));
+        if (timeEl) timeEl.textContent = timeAgo(checkedAtById.get(id));
       }
     }
   }
@@ -466,6 +513,11 @@
     if (!btn) return;
     statusFilter = btn.getAttribute("data-filter");
     updatePillStyles();
+    if (latestPayload) render(latestPayload);
+  });
+
+  partnerFilterEl.addEventListener("change", (e) => {
+    partnerFilter = e.target.value;
     if (latestPayload) render(latestPayload);
   });
 

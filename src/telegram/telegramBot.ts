@@ -44,6 +44,13 @@ export function escapeMd(text: string): string {
   return text.replace(/([_*[\]()~`>#+\-=|{}.!])/g, "\\$1");
 }
 
+/** Ghép nhãn đối tác (VD "[VTVGO] VTV1 HD") - "static" (luồng khai báo tay, không qua Partner) không
+ *  hiện tag. Escape CẢ dấu ngoặc vuông tĩnh (MarkdownV2 coi "[", "]" là ký tự reserved). */
+function formatChannelLabel(name: string, partner: string): string {
+  if (!partner || partner === "static") return escapeMd(name);
+  return `\\[${escapeMd(partner.toUpperCase())}\\] ${escapeMd(name)}`;
+}
+
 const CATEGORY_LABEL: Record<AlertIncident["category"], string> = {
   SYSTEM_OVERLOAD: "Hệ thống giám sát quá tải",
   NETWORK: "Lỗi mạng / mất kết nối Origin-CDN",
@@ -57,7 +64,7 @@ function shortIssue(incident: AlertIncident): string {
 }
 
 export function buildIncidentMessage(incident: AlertIncident): string {
-  const name = escapeMd(incident.streamName);
+  const name = formatChannelLabel(incident.streamName, incident.partner);
   const detailLines = incident.issues.map((issue) => `📉 *Chi tiết:* ${escapeMd(issue)}`).join("\n");
   const headline =
     incident.status === "DOWN" ? `Luồng *${name}* mất kết nối\\!` : `Luồng *${name}* bị suy giảm\\!`;
@@ -73,7 +80,9 @@ export function buildIncidentMessage(incident: AlertIncident): string {
 
 /** Gộp nhiều sự cố xảy ra trong cùng 1 khung thời gian thành 1 tin nhắn duy nhất (chống spam diện rộng). */
 export function buildDigestMessage(incidents: AlertIncident[]): string {
-  const detail = incidents.map((i) => `${escapeMd(i.streamName)} \\(${escapeMd(shortIssue(i))}\\)`).join(", ");
+  const detail = incidents
+    .map((i) => `${formatChannelLabel(i.streamName, i.partner)} \\(${escapeMd(shortIssue(i))}\\)`)
+    .join(", ");
 
   return [
     `🔴 *CẢNH BÁO DIỆN RỘNG \\(Gộp\\)*`,
@@ -84,7 +93,7 @@ export function buildDigestMessage(incidents: AlertIncident[]): string {
 }
 
 export function buildRecoveryMessage(result: StreamCheckResult): string {
-  const name = escapeMd(result.streamName);
+  const name = formatChannelLabel(result.streamName, result.partner);
   return [
     `🟢 *PHỤC HỒI:* Luồng *${name}* đã ổn định\\.`,
     `🕐 Thời điểm: ${escapeMd(formatVnTime(result.checkedAt))}`,

@@ -12,16 +12,35 @@ Hệ thống giám sát chủ động luồng HLS (TV + Radio), cảnh báo qua 
 
 ```
 src/
-├── config/config.ts        # Load + validate config.json bằng zod (CONFIG_PATH env, mặc định ./config.json)
+├── config/
+│   ├── config.ts            # Load + validate config.json bằng zod (CONFIG_PATH env, mặc định ./config.json)
+│   │                        #   Chỉ còn tham số VẬN HÀNH (threshold, retry, batching...) + staticStreams
+│   │                        #   (optional, luồng khai báo tay) - danh sách luồng CHÍNH giờ đến từ Partner
+│   │                        #   API (xem partners/streamSyncService.ts), không còn field `streams` bắt buộc.
+│   └── partnerConfig.ts     # Parse VTC_PARTNER_KEYS ("ten:token,ten:token") + đọc PARTNER_API_BASE_URL/
+│                            #   PARTNER_SYNC_INTERVAL_SECONDS (optional, có fallback mặc định).
 ├── types/index.ts          # Toàn bộ type dùng chung
 ├── utils/time.ts           # formatVnTime() — format giờ GMT+7 cố định (Intl, KHÔNG phụ thuộc TZ host)
 ├── logger/logger.ts        # Winston, console pretty (dev) / JSON (prod), dùng formatVnTime cho timestamp
+├── partners/
+│   ├── partnerApiClient.ts   # Gọi GET .../api/public/channels (header Authorization: Bearer <token>) cho
+│   │                          #   1 Partner, validate TỪNG kênh bằng zod (1 kênh sai format bị bỏ qua, không
+│   │                          #   hỏng cả danh sách), map thành StreamConfig[] (gắn partner + id).
+│   └── streamSyncService.ts  # Sync worker: gọi lại TẤT CẢ Partner mỗi PARTNER_SYNC_INTERVAL_SECONDS (mặc
+│                              #   định 5 phút). 1 Partner lỗi tạm thời chỉ bị log - GIỮ NGUYÊN danh sách
+│                              #   kênh cũ của Partner đó (không xóa sạch vì 1 lần fetch fail) - xem "Bẫy
+│                              #   kỹ thuật" #18.
 ├── monitor/
 │   ├── m3u8Parser.ts        # Parser HLS thủ công: media playlist, master playlist,
 │   │                        #   EXT-X-MEDIA (audio rendition riêng), EXT-X-STREAM-INF AUDIO group-id
 │   ├── manifestChecker.ts   # Level 1: HTTP GET .m3u8, đo latency, tự resolve master -> variant
 │   │                        #   bandwidth cao nhất + audio rendition riêng nếu có
 │   ├── freezeChecker.ts     # Level 2: so sánh media-sequence + segment cuối giữa 2 lần check
+│   ├── streamRegistry.ts    # Nguồn sự thật DUY NHẤT cho danh sách luồng đang giám sát (thay cho
+│   │                        #   config.streams tĩnh cũ) - gồm staticStreams (partner="static") + luồng
+│   │                        #   sync từ Partner API, khóa theo `id` (= `partner:name`) - xem "Bẫy kỹ
+│   │                        #   thuật" #17. replacePartnerStreams() diff theo id, trả về added/removed
+│   │                        #   để scheduler.ts đồng bộ interval runtime.
 │   ├── streamChecker.ts     # HÀM THUẦN: chạy Level 1->2->3 một lần, trả StreamCheckResult.
 │   │                        #   KHÔNG quyết định alert, KHÔNG ghi state - dùng lại được cho cả
 │   │                        #   check định kỳ lẫn các lần retry.
@@ -35,15 +54,19 @@ src/
 │   │                        #   NETWORK dùng config.retry.network (kiên nhẫn hơn, backoff dài hơn),
 │   │                        #   STREAM dùng config.retry gốc - xem mục "Bẫy kỹ thuật" #12.
 │   ├── eventLoopMonitor.ts  # Đo event-loop lag (drift sampling) + memory pressure (v8 heap_size_limit)
-│   ├── stateStore.ts        # In-memory state per stream: lastStatus, phase (STABLE/SUSPECT),
-│   │                        #   suspectAttempt, isChecking (chống chồng lấn), pendingRetryTimer...
+│   ├── stateStore.ts        # In-memory state per stream (khóa theo `stream.id`, KHÔNG theo `name` - xem
+│   │                        #   "Bẫy kỹ thuật" #17): lastStatus, phase (STABLE/SUSPECT), suspectAttempt,
+│   │                        #   isChecking (chống chồng lấn), pendingRetryTimer... removeState(id) dọn
+│   │                        #   state khi 1 kênh biến mất khỏi Partner API.
 │   └── scheduler.ts         # setInterval per stream + p-queue Level1/2 (maxConcurrentManifestChecks).
 │                            #   Bỏ qua interval khi phase=SUSPECT hoặc isChecking=true. Có 2 lịch
 │                            #   ĐỘC LẬP: lịch chậm (checkIntervalSeconds, Level1->2->3 đầy đủ, qua
 │                            #   runCheck) + lịch nhanh (fastCheckIntervalSeconds, CHỈ Level1+2, qua
 │                            #   runFastProbe - watchdog phát hiện sớm manifest lỗi/đóng băng, KHÔNG
 │                            #   BAO GIỜ tự ghi state, chỉ được phép kích hoạt sớm 1 lần runCheck đầy
-│                            #   đủ) - xem "Bẫy kỹ thuật" #16.
+│                            #   đủ) - xem "Bẫy kỹ thuật" #16. KHÔNG còn chạy 1 lần cố định lúc khởi động -
+│                            #   trả về addStreams()/removeStream() để streamSyncService.ts thêm/bớt luồng
+│                            #   runtime khi Partner API đổi danh sách kênh, không cần restart.
 ├── ffmpeg/ffprobe.ts        # Level 3: đo bitrate thật + phát hiện lỗi giải mã (xem mục "Bẫy kỹ thuật").
 │                            #   2 lớp hàng đợi lồng nhau khi gọi analyzeStream(): hostQueue (per-
 │                            #   hostname, configureHostConcurrency/maxConcurrentPerHost - chống origin
@@ -64,7 +87,8 @@ src/
 │   ├── logger.ts             # Log vận hành chính (console)
 │   └── diagnosticLogger.ts   # Log riêng ra file diagnostic.log (JSON) - retry, executionMs, phân loại lỗi...
 └── index.ts                 # Entry point, wiring (startEventLoopMonitor, configureFfprobeConcurrency,
-                              #   configureAlertManager, startWebServer), xử lý SIGINT/SIGTERM (flush alert trước khi thoát)
+                              #   configureAlertManager, startWebServer, startPartnerSync), xử lý
+                              #   SIGINT/SIGTERM (dừng scheduler + partnerSync, flush alert trước khi thoát)
 
 public/index.html             # Dashboard tĩnh (HTML + Tailwind CDN + vanilla JS, KHÔNG qua build step của
                                #   tsc) - Dockerfile COPY riêng thư mục này vào image (COPY public ./public).
@@ -86,9 +110,15 @@ npm start            # node dist/index.js (sau build)
 ## File cấu hình — QUAN TRỌNG
 
 - `config.example.json`: **có track trong git**, dùng làm mẫu.
-- `config.json`: **nằm trong `.gitignore`**, chứa URL luồng thật của người dùng — KHÔNG bao giờ commit hay hiển thị công khai. Nếu cần sửa/test, sửa trực tiếp file local, không cần lo ảnh hưởng git.
-- `.env`: cũng gitignore, chứa `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID`.
+- `config.json`: **nằm trong `.gitignore`**, chứa `staticStreams` (luồng khai báo tay, optional) + tham số
+  vận hành (threshold, retry, batching...) — KHÔNG bao giờ commit hay hiển thị công khai. Nếu cần sửa/test,
+  sửa trực tiếp file local, không cần lo ảnh hưởng git.
+- `.env`: cũng gitignore, chứa `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` + `VTC_PARTNER_KEYS` (danh sách
+  Partner + token, cú pháp `ten:token,ten:token` - xem `config/partnerConfig.ts`), tùy chọn
+  `PARTNER_API_BASE_URL`/`PARTNER_SYNC_INTERVAL_SECONDS`.
 - Schema validate bằng zod trong `config.ts` — mọi thay đổi cấu trúc config phải update cả `ConfigSchema` (zod) lẫn `AppConfig`/`StreamConfig` (types).
+- Danh sách luồng KHÔNG còn nằm trong `AppConfig.streams` (đã xóa) - nguồn sự thật giờ là
+  `monitor/streamRegistry.ts` (gộp `staticStreams` + kết quả sync từ Partner API).
 
 ## Bẫy kỹ thuật đã gặp — đọc trước khi sửa `ffprobe.ts` hoặc `telegramBot.ts`
 
@@ -124,6 +154,24 @@ npm start            # node dist/index.js (sau build)
 
 16. **`scheduler.ts::runFastProbe` (watchdog Level 1+2) CHỈ ĐƯỢC PHÉP kích hoạt sớm 1 lần `runCheck` đầy đủ, TUYỆT ĐỐI KHÔNG tự gọi `processCheckResult`/ghi state trực tiếp** — phát hiện khi điều tra nguyên nhân "4-6 phút mới thấy lỗi trên dashboard" (do `checkStream()` gộp cả Level1->2->3 vào 1 lịch duy nhất `checkIntervalSeconds`, trong khi Level1+2 chỉ cần HTTP GET nhẹ, hoàn toàn có thể chạy nhanh hơn mà không đụng origin). Lúc đầu định để watchdog tự cập nhật trạng thái OK/lỗi mỗi 15s cho nhanh, nhưng nhận ra nếu làm vậy, 1 kết quả "OK" từ Level1+2 (vốn KHÔNG hề kiểm tra Level 3) sẽ xóa mất tiến trình SUSPECT/retry đang tích lũy từ 1 lần kiểm tra Level 3 chậm hơn đang phát hiện tụt bitrate/mất track thật — vì Level1+2 "OK" không đồng nghĩa luồng thực sự ổn. Thiết kế đúng: watchdog chỉ ĐỌC state để quyết định có đáng kích hoạt sớm hay không (`phase === "STABLE" && lastStatus === "OK" && !isChecking`), và khi phát hiện bất thường chỉ gọi lại `runCheck()` - để `incidentManager` xử lý qua đúng state machine SUSPECT/retry như bình thường.
 
+17. **Khóa định danh nội bộ của 1 luồng là `stream.id` (= `` `${partner}:${name}` ``), TUYỆT ĐỐI KHÔNG dùng `stream.name`** — trước khi có Partner API, `name` là khóa duy nhất trong `stateStore`/`scheduler`/`incidentManager` (kể cả `overloadStreak`) vì người vận hành tự đặt tên, không trùng. Từ khi luồng đến từ NHIỀU Partner khác nhau, 2 Partner hoàn toàn có thể đặt tên kênh trùng nhau (VD cả 2 đều có "VTV1") - nếu vẫn dùng `name` làm khóa, luồng sync sau sẽ ĐÈ state lên luồng của Partner kia (mất giám sát 1 trong 2 mà không có lỗi/log nào báo). `stream.name` vẫn dùng để HIỂN THỊ (log, Telegram, dashboard) như cũ, chỉ khóa Map là đổi.
+
+18. **`streamSyncService.ts::syncOnce` KHÔNG được xóa danh sách kênh của 1 Partner chỉ vì 1 lần gọi API lỗi (timeout, 401, response sai format)** — dùng `Promise.allSettled` cho từng Partner, Partner nào `rejected` chỉ log lỗi, GIỮ NGUYÊN kênh cũ của Partner đó trong `streamRegistry` (không gọi `replacePartnerStreams`). Nếu đổi thành xóa sạch khi lỗi, 1 lần API của đối tác bị rớt mạng tạm thời (rất thường gặp, cùng bản chất với lỗi origin ở mục #11) sẽ khiến TOÀN BỘ kênh của đối tác đó biến mất khỏi dashboard + ngừng giám sát cho tới lần sync kế tiếp thành công.
+
+19. **API Partner (VTVgo) KHÔNG cung cấp field loại luồng TV/Radio** — `partnerApiClient.ts` mặc định
+    `type: "tv"` cho MỌI kênh từ Partner. Nếu 1 Partner thực sự có kênh radio, hệ thống sẽ cố decode
+    Video cho kênh đó và báo nhầm "Mất track Video" liên tục (alert giả). CHƯA có cơ chế nhận diện radio
+    tự động (VD dò theo tên kênh) - nếu cần, phải thêm logic riêng trong `partnerApiClient.ts` (hoặc yêu
+    cầu Partner bổ sung field `type` vào response) TRƯỚC khi bật sync cho Partner có kênh radio thật.
+
+20. **URL kéo luồng (`hls`) của VTVgo có thể đổi dù tên kênh (`name`, cũng là khóa `id`) không đổi** —
+    khi VTVgo xoay `VTC_HLS_SECRET` (quy trình chuẩn khi lộ key, xem tài liệu tích hợp mục 5), token
+    `?pull=...` trong `hls` đổi nhưng `name` giữ nguyên. `streamRegistry.ts::replacePartnerStreams` phải
+    so sánh CẢ `url` (không chỉ diff theo `id`) để phát hiện trường hợp này, coi như gỡ bản cũ + thêm
+    bản mới (đẩy vào CẢ `removed` lẫn `added`). `index.ts` phải gọi `scheduler.removeStream()` cho
+    `removed` TRƯỚC `scheduler.addStreams(added)` - vì `addStreams()` bỏ qua id đã tồn tại (idempotent
+    chống trùng interval), nếu thêm trước sẽ không có tác dụng và luồng bị kẹt lại URL cũ đã hết hiệu lực.
+
 ## Loại luồng: `type: "tv" | "radio"`
 
 - `"tv"` (mặc định): bắt buộc cả Video + Audio.
@@ -133,6 +181,18 @@ npm start            # node dist/index.js (sau build)
 ## Trạng thái hiện tại
 
 Đã hoàn thành đầy đủ theo yêu cầu gốc + nâng cấp "Deep Diagnostic" + Web Dashboard real-time + Basic Auth + throttling theo host: Level 1/2/3, cảnh báo Telegram, Docker + GitHub Actions → Coolify webhook, README chi tiết, hỗ trợ TV/Radio, đo bitrate chính xác, giờ GMT+7, phân loại nguyên nhân gốc rễ (SYSTEM_OVERLOAD/NETWORK/STREAM), debounce retry (SUSPECT state machine) với CHÍNH SÁCH RIÊNG theo category (NETWORK kiên nhẫn hơn STREAM, xem "Bẫy kỹ thuật" #14), queue ffprobe riêng theo cả TỔNG (`maxConcurrentChecks`) lẫn PER-HOST (`maxConcurrentPerHost`, chống origin rate-limit khi nhiều kênh chung 1 origin) + đo event-loop lag, AlertManager gộp tin nhắn, diagnostic.log riêng, Dashboard web dark-mode qua SSE + Basic Auth tùy chọn (`src/web/server.ts` + `public/index.html`). Đã test thực tế bằng luồng Apple HLS test công khai + 25 luồng production thật của người dùng (phát hiện + sửa bug thật: origin `catchup.truyenhinhso.vn` bị rate-limit do 25 kênh mở quá nhiều kết nối TCP đồng thời), và build/chạy thử Docker image thật (không chỉ unit test). Code đã push lên `https://github.com/canona/FalconHLS-Monitor` (public, nhánh `main`).
+
+Đã bổ sung **Dynamic Source Sync (đồng bộ luồng từ Partner API)**: `config.json::streams` tĩnh đã bị loại
+bỏ, thay bằng `staticStreams` (optional, luồng khai báo tay) + đồng bộ định kỳ (mặc định 5 phút, xem
+`partners/streamSyncService.ts`) từ API của từng Partner khai báo trong `VTC_PARTNER_KEYS` (`.env`). Mỗi
+luồng giờ có `partner` + `id` (= `partner:name`, xem "Bẫy kỹ thuật" #17) - hiển thị thành Badge/Tag đối
+tác + bộ lọc theo đối tác trên Dashboard (`public/index.html`), và tag `[TÊN_PARTNER]` trong tin Telegram
+(`telegramBot.ts::formatChannelLabel`). Scheduler (`scheduler.ts`) đã refactor để `addStreams()`/
+`removeStream()` runtime, không cần restart khi Partner API thêm/bớt kênh. Cấu trúc API Partner đã
+**XÁC NHẬN THẬT** với VTVgo (tài liệu "14 — Tích hợp VTVgo") - response bọc trong `channels[]`, mỗi kênh
+có `name`/`status`/`live`/`hls` (URL kéo luồng đã gắn token `?pull=...` không hết hạn, dùng thẳng) - xem
+`partners/partnerApiClient.ts::PartnerApiChannelSchema`. API Partner **KHÔNG có field loại luồng
+TV/Radio** - xem "Bẫy kỹ thuật" #19.
 
 Chưa làm / có thể mở rộng thêm nếu được yêu cầu:
 - Dashboard hiện là read-only (xem trạng thái), chưa có tương tác (VD nút "test lại ngay" cho 1 luồng, xác nhận đã đọc cảnh báo...).

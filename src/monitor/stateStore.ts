@@ -20,21 +20,29 @@ function defaultState(): StreamRuntimeState {
   };
 }
 
-export function getState(streamName: string): StreamRuntimeState {
-  let state = states.get(streamName);
+export function getState(id: string): StreamRuntimeState {
+  let state = states.get(id);
   if (!state) {
     state = defaultState();
-    states.set(streamName, state);
+    states.set(id, state);
   }
   return state;
 }
 
-export function setState(streamName: string, state: StreamRuntimeState): void {
-  states.set(streamName, state);
+export function setState(id: string, state: StreamRuntimeState): void {
+  states.set(id, state);
 }
 
-export function setLastResult(streamName: string, result: StreamCheckResult): void {
-  lastResults.set(streamName, result);
+export function setLastResult(id: string, result: StreamCheckResult): void {
+  lastResults.set(id, result);
+}
+
+/** Xóa state của 1 luồng đã biến mất khỏi danh sách giám sát (VD Partner gỡ kênh) - chống rò rỉ. */
+export function removeState(id: string): void {
+  const state = states.get(id);
+  if (state?.pendingRetryTimer) clearTimeout(state.pendingRetryTimer);
+  states.delete(id);
+  lastResults.delete(id);
 }
 
 export function getAllLastResults(): StreamCheckResult[] {

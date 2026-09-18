@@ -11,14 +11,16 @@ import { getState } from "./stateStore";
  * cho cả lần kiểm tra định kỳ lẫn các lần retry trong cơ chế debounce/suspect.
  */
 export async function checkStream(stream: StreamConfig, config: AppConfig): Promise<StreamCheckResult> {
-  const previousState = getState(stream.name);
+  const previousState = getState(stream.id);
   const issues: string[] = [];
 
   const manifest = await checkManifest(stream.url, config.timeoutSeconds);
 
   if (!manifest.ok || !manifest.manifest) {
     return {
+      id: stream.id,
       streamName: stream.name,
+      partner: stream.partner,
       checkedAt: new Date(),
       status: "DOWN",
       issues: [manifest.error || "Không truy cập được manifest"],
@@ -48,7 +50,9 @@ export async function checkStream(stream: StreamConfig, config: AppConfig): Prom
   // vì bản thân runCheck() bị nghẽn lại ở bước Level 3 phía sau.
   if (issues.length > 0) {
     return {
+      id: stream.id,
       streamName: stream.name,
+      partner: stream.partner,
       checkedAt: new Date(),
       status: "DEGRADED",
       issues,
@@ -100,7 +104,9 @@ export async function checkStream(stream: StreamConfig, config: AppConfig): Prom
   const status: HealthStatus = issues.length === 0 ? "OK" : "DEGRADED";
 
   return {
+    id: stream.id,
     streamName: stream.name,
+    partner: stream.partner,
     checkedAt: new Date(),
     status,
     issues,
