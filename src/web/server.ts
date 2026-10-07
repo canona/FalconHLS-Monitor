@@ -128,8 +128,10 @@ function createApp(): Express {
 
   // /health đăng ký TRƯỚC middleware auth - Docker HEALTHCHECK (wget nội bộ trong container,
   // không có credential) phải luôn truy cập được bất kể DASHBOARD_USER/PASSWORD có cấu hình hay không.
+  // Vì nằm ngoài auth nên CHỈ trả trạng thái sống/chết - KHÔNG trả buildStatusPayload() (chứa url luồng
+  // kèm token ?pull=... của Partner). Dữ liệu chi tiết lấy qua /api/status (có auth).
   app.get("/health", (_req: Request, res: Response) => {
-    res.json({ status: "ok", ...buildStatusPayload() });
+    res.json({ status: "ok" });
   });
 
   app.use(basicAuthMiddleware);

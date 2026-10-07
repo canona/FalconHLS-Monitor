@@ -151,7 +151,7 @@ Khi số luồng tăng lên (VD 25-30+), nguy cơ lớn nhất không phải là
 
 7. **Watchdog Level 1+2 tách lịch riêng** (`src/monitor/scheduler.ts::runFastProbe`) — khi số kênh lớn buộc `checkIntervalSeconds` phải khá dài (VD 180s cho 39 kênh chung 1 origin), lỗi manifest/đóng băng (chỉ cần HTTP GET nhẹ, không tốn tài nguyên origin như Level 3) sẽ bị phát hiện chậm oan uổng nếu dùng chung lịch. Watchdog chạy Level 1+2 theo `fastCheckIntervalSeconds` (mặc định 15s) riêng biệt; nếu phát hiện manifest lỗi hoặc đóng băng, kích hoạt NGAY 1 lần kiểm tra đầy đủ (`runCheck`) thay vì đợi tới lượt Level 3 tiếp theo. Watchdog CHỈ được phép kích hoạt sớm, không bao giờ tự ghi nhận trạng thái hay xác nhận sự cố — việc đó vẫn qua đúng cơ chế retry/SUSPECT ở bước 2, nên không phá vỡ khả năng chống false-positive.
 
-Xem thêm trạng thái debug qua `GET /health` — nay trả về cả `phase` (`STABLE`/`SUSPECT`), `suspectAttempt`, và tình trạng tài nguyên hệ thống (`eventLoopLagMs`, `heapUsedRatio`, `ffprobeQueue`).
+Xem thêm trạng thái debug qua `GET /api/status` (có Basic Auth nếu bật) — trả về cả `phase` (`STABLE`/`SUSPECT`), `suspectAttempt`, và tình trạng tài nguyên hệ thống (`eventLoopLagMs`, `heapUsedRatio`, `ffprobeQueue`).
 
 ---
 
@@ -183,7 +183,7 @@ npm run build
 npm start
 ```
 
-Sau khi chạy, truy cập `http://localhost:3000/health` để xem nhanh trạng thái tất cả các luồng đang giám sát (dùng cho debug hoặc làm health check endpoint cho Coolify).
+Sau khi chạy, truy cập `http://localhost:3000/` (Dashboard) hoặc `http://localhost:3000/api/status` để xem trạng thái tất cả các luồng. `GET /health` chỉ trả `{"status":"ok"}` — dùng làm health check endpoint cho Docker/Coolify.
 
 ### 3.3. Lấy `TELEGRAM_BOT_TOKEN` và `TELEGRAM_CHAT_ID`
 
@@ -243,7 +243,7 @@ Mỗi khi có `push` vào nhánh `main`:
   - `GET /` — trang dashboard (`public/index.html`).
   - `GET /api/status` — JSON trạng thái toàn bộ luồng tại thời điểm gọi (dùng cho polling/tích hợp hệ thống khác).
   - `GET /api/events` — **Server-Sent Events**: đẩy lại toàn bộ trạng thái mỗi 3 giây, dashboard tự cập nhật không cần tải lại trang. Nếu trình duyệt/proxy không hỗ trợ SSE, JS tự động chuyển sang polling `/api/status` mỗi 5 giây (fallback, xem `public/index.html`).
-  - `GET /health` — giữ nguyên cho Docker `HEALTHCHECK`, nay trả kèm luôn dữ liệu dashboard.
+  - `GET /health` — cho Docker `HEALTHCHECK`, nằm NGOÀI Basic Auth nên chỉ trả `{"status":"ok"}` (không trả dữ liệu luồng, tránh lộ URL có token `?pull=...`).
 - **Frontend:** 1 file tĩnh `public/index.html` (HTML + Tailwind CDN + vanilla JS, không build step, không framework) — do Dockerfile `COPY public ./public` trực tiếp vào image, không qua `tsc`.
 
 ### 5.2. Dữ liệu mỗi luồng (`/api/status`)

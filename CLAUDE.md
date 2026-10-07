@@ -81,7 +81,8 @@ src/
 │                            #   digest nếu > alertBatching.minCountToDigest, else gửi riêng lẻ.
 ├── web/server.ts            # Express: phục vụ public/index.html (dashboard) + GET /api/status (JSON)
 │                            #   + GET /api/events (SSE, đẩy lại mỗi 3s) + GET /health (giữ cho Docker
-│                            #   HEALTHCHECK). CHẠY CHUNG 1 PORT với API - không mở port riêng cho dashboard.
+│                            #   HEALTHCHECK - nằm NGOÀI Basic Auth nên CHỈ trả {status:"ok"}, TUYỆT
+│                            #   ĐỐI không trả buildStatusPayload() vì chứa url luồng kèm token ?pull=...). CHẠY CHUNG 1 PORT với API - không mở port riêng cho dashboard.
 │                            #   Đã thay thế hoàn toàn monitor/healthServer.ts cũ (đã xóa file đó).
 ├── logger/
 │   ├── logger.ts             # Log vận hành chính (console)

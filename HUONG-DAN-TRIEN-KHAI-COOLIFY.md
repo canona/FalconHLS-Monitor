@@ -187,9 +187,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
   CMD wget -qO- http://localhost:3000/health || exit 1
 ```
 
-Trên tab **Healthcheck** của Coolify có thể bật thêm health check phía Traefik: Path `/health`, Port `3000`, Scheme `http`. `/health` **không** yêu cầu Basic Auth nên không cần khai báo user/pass ở đây.
-
-> ⚠️ Lưu ý bảo mật: ở phiên bản hiện tại, `/health` đứng ngoài Basic Auth nhưng trả về **toàn bộ** dữ liệu dashboard, kể cả `url` luồng (có token `?pull=...`). Ai biết domain đều đọc được. Cho đến khi code được sửa để `/health` chỉ trả `{ "status": "ok" }`, nên chặn đường dẫn `/health` từ bên ngoài (VD rule ở Cloudflare/WAF), vì HEALTHCHECK của Docker gọi nội bộ qua `localhost` nên không bị ảnh hưởng.
+Trên tab **Healthcheck** của Coolify có thể bật thêm health check phía Traefik: Path `/health`, Port `3000`, Scheme `http`. `/health` **không** yêu cầu Basic Auth nên không cần khai báo user/pass ở đây. Endpoint này chỉ trả `{"status":"ok"}`, không chứa dữ liệu kênh — dữ liệu chi tiết nằm ở `/api/status` (có Basic Auth).
 
 ---
 
@@ -206,7 +204,7 @@ Trên tab **Healthcheck** của Coolify có thể bật thêm health check phía
 
 | Kiểm tra | Cách làm | Kết quả mong đợi |
 |---|---|---|
-| Health | `curl https://falconhlsmonitor.vtcdigital.top/health` | HTTP 200 + JSON trạng thái |
+| Health | `curl https://falconhlsmonitor.vtcdigital.top/health` | HTTP 200 + `{"status":"ok"}` |
 | Dashboard | Mở domain trên trình duyệt | Hỏi đăng nhập (nếu bật Basic Auth) → danh sách kênh, Badge đối tác |
 | API | `curl -u admin:<pass> https://.../api/status` | JSON danh sách luồng |
 | Partner sync | Xem log container | Không có lỗi `401`/timeout khi gọi Partner API |
@@ -281,6 +279,5 @@ Push 1 commit nhỏ lên `main` → tab **Actions** trên GitHub thấy 2 job xa
 - [ ] Không commit `.env` / `config.json` thật lên git (đã có trong `.gitignore`).
 - [ ] Token Telegram, token Partner, mật khẩu dashboard chỉ nằm trong Environment Variables của Coolify, **bỏ tick Build Variable**.
 - [ ] Bật Basic Auth (`DASHBOARD_USER` + `DASHBOARD_PASSWORD`) vì dashboard hiển thị URL luồng có gắn token `?pull=...`.
-- [ ] Chặn truy cập `/health` từ Internet (xem cảnh báo ở Bước 5) — endpoint này hiện lộ URL luồng mà không cần đăng nhập.
 - [ ] API Token Coolify chỉ cấp quyền **deploy**, lưu trong GitHub Secrets.
 - [ ] Khi lộ token Partner: đổi token phía Partner → cập nhật `VTC_PARTNER_KEYS` → Restart.
