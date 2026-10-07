@@ -199,6 +199,8 @@ Sau khi chạy, truy cập `http://localhost:3000/health` để xem nhanh trạn
 
 ## 4. Triển khai CI/CD: GitHub → Coolify
 
+> Hướng dẫn từng bước chi tiết (tạo Application, biến môi trường, File mount, webhook, xử lý sự cố): xem [HUONG-DAN-TRIEN-KHAI-COOLIFY.md](HUONG-DAN-TRIEN-KHAI-COOLIFY.md).
+
 ### 4.1. Chuẩn bị trên Coolify
 
 1. Tạo một **Application** mới trên Coolify, chọn nguồn **Docker** (build từ `Dockerfile` trong repo).
